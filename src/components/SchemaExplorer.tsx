@@ -249,20 +249,34 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
 
       {/* Search filters */}
       <div className={`border-b px-3 py-2 space-y-1.5 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
-        <input
-          type="text"
-          value={entitySearch}
-          onChange={(e) => setEntitySearch(e.target.value)}
-          placeholder="Filter entities…"
-          className={`w-full rounded px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-700 text-neutral-200 placeholder:text-neutral-500' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
-        />
-        <input
-          type="text"
-          value={attrSearch}
-          onChange={(e) => setAttrSearch(e.target.value)}
-          placeholder="Filter attributes…"
-          className={`w-full rounded px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-600 text-neutral-200 placeholder:text-neutral-400' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
-        />
+        <div className="relative">
+          <input
+            type="text"
+            value={entitySearch}
+            onChange={(e) => setEntitySearch(e.target.value)}
+            placeholder="Filter entities…"
+            className={`w-full rounded px-2.5 py-1.5 pr-6 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-700 text-neutral-200 placeholder:text-neutral-500' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
+          />
+          {entitySearch && (
+            <button onClick={() => setEntitySearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5" title="Clear">
+              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+            </button>
+          )}
+        </div>
+        <div className="relative">
+          <input
+            type="text"
+            value={attrSearch}
+            onChange={(e) => setAttrSearch(e.target.value)}
+            placeholder="Filter attributes…"
+            className={`w-full rounded px-2.5 py-1.5 pr-6 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-600 text-neutral-200 placeholder:text-neutral-400' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
+          />
+          {attrSearch && (
+            <button onClick={() => setAttrSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5" title="Clear">
+              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Body */}

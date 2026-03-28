@@ -21,10 +21,25 @@ import { tokenize, parseStatement } from './sql';
 
 type ActiveTab = 'results' | 'fetchxml' | 'history';
 
+interface QueryTab {
+    id: string;
+    label: string;
+    sql: string;
+}
+
 export default function App() {
     const [activeTab, setActiveTab] = useState<ActiveTab>('results');
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+
+    // Query tabs state
+    const [queryTabs, setQueryTabs] = useState<QueryTab[]>([
+        { id: '1', label: 'Query 1', sql: 'SELECT TOP 10 * FROM account' },
+    ]);
+    const [activeQueryTabId, setActiveQueryTabId] = useState<string>('1');
+    const [nextTabNum, setNextTabNum] = useState<number>(2);
+    const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+    const [renameValue, setRenameValue] = useState<string>('');
 
     const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
     const pendingDmlSqlRef = useRef<string>('');
@@ -53,6 +68,85 @@ export default function App() {
     );
 
     useToolboxEvents(handleToolboxEvent);
+
+    // Query tab management
+    const addQueryTab = useCallback(() => {
+        // Save current editor content to active tab before adding
+        const currentSql = editorRef.current?.getValue() ?? '';
+        setQueryTabs((prev) =>
+            prev.map((t) => (t.id === activeQueryTabId ? { ...t, sql: currentSql } : t))
+        );
+
+        const newId = String(Date.now());
+        const newLabel = `Query ${nextTabNum}`;
+        const newSql = 'SELECT TOP 10 * FROM account';
+        setNextTabNum((n) => n + 1);
+        setQueryTabs((prev) => [...prev, { id: newId, label: newLabel, sql: newSql }]);
+        setActiveQueryTabId(newId);
+        // Set editor content after state updates have been scheduled
+        setTimeout(() => {
+            editorRef.current?.setValue(newSql);
+            editorRef.current?.focus();
+        }, 0);
+    }, [activeQueryTabId, nextTabNum]);
+
+    const closeQueryTab = useCallback(
+        (id: string) => {
+            setQueryTabs((prev) => {
+                if (prev.length <= 1) return prev; // don't close last tab
+                const idx = prev.findIndex((t) => t.id === id);
+                const next = prev.filter((t) => t.id !== id);
+                if (id === activeQueryTabId) {
+                    // Switch to nearest neighbor
+                    const neighborIdx = Math.min(idx, next.length - 1);
+                    const neighbor = next[neighborIdx];
+                    setActiveQueryTabId(neighbor.id);
+                    setTimeout(() => {
+                        editorRef.current?.setValue(neighbor.sql);
+                        editorRef.current?.focus();
+                    }, 0);
+                }
+                return next;
+            });
+        },
+        [activeQueryTabId]
+    );
+
+    const switchQueryTab = useCallback(
+        (id: string) => {
+            if (id === activeQueryTabId) return;
+            // Save current editor content to departing tab
+            const currentSql = editorRef.current?.getValue() ?? '';
+            setQueryTabs((prev) =>
+                prev.map((t) => (t.id === activeQueryTabId ? { ...t, sql: currentSql } : t))
+            );
+            setActiveQueryTabId(id);
+            // Load the new tab's SQL into the editor
+            setQueryTabs((prev) => {
+                const tab = prev.find((t) => t.id === id);
+                if (tab) {
+                    setTimeout(() => {
+                        editorRef.current?.setValue(tab.sql);
+                        editorRef.current?.focus();
+                    }, 0);
+                }
+                return prev;
+            });
+        },
+        [activeQueryTabId]
+    );
+
+    // Ctrl+T / Cmd+T to add a new query tab
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+                e.preventDefault();
+                addQueryTab();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [addQueryTab]);
 
     // Add DML results to history when they resolve
     useEffect(() => {
@@ -250,12 +344,116 @@ export default function App() {
 
                 {/* ── Main content ────────────────────────────────────── */}
                 <div className="flex flex-1 flex-col min-w-0 min-h-0">
+                    {/* Query tab bar */}
+                    <div
+                        className={`flex items-center shrink-0 border-b overflow-x-auto ${
+                            isDark ? 'border-neutral-700 bg-gray-900' : 'border-gray-200 bg-gray-100'
+                        }`}
+                        style={{ scrollbarWidth: 'none' }}
+                    >
+                        {queryTabs.map((tab) => (
+                            <div
+                                key={tab.id}
+                                className={[
+                                    'group flex items-center gap-1 shrink-0 border-b-2 cursor-pointer select-none transition-colors',
+                                    'text-xs px-3 py-1.5',
+                                    activeQueryTabId === tab.id
+                                        ? isDark
+                                            ? 'border-indigo-500 text-indigo-400 bg-neutral-800'
+                                            : 'border-indigo-500 text-indigo-600 bg-white'
+                                        : isDark
+                                          ? 'border-transparent text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-200/60',
+                                ].join(' ')}
+                                onClick={() => {
+                                    if (renamingTabId !== tab.id) {
+                                        switchQueryTab(tab.id);
+                                    }
+                                }}
+                                onDoubleClick={() => {
+                                    setRenamingTabId(tab.id);
+                                    setRenameValue(tab.label);
+                                }}
+                            >
+                                {renamingTabId === tab.id ? (
+                                    <input
+                                        autoFocus
+                                        value={renameValue}
+                                        onChange={(e) => setRenameValue(e.target.value)}
+                                        onBlur={() => {
+                                            if (renameValue.trim()) {
+                                                setQueryTabs((prev) =>
+                                                    prev.map((t) =>
+                                                        t.id === tab.id ? { ...t, label: renameValue.trim() } : t
+                                                    )
+                                                );
+                                            }
+                                            setRenamingTabId(null);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.currentTarget.blur();
+                                            } else if (e.key === 'Escape') {
+                                                setRenamingTabId(null);
+                                            }
+                                            e.stopPropagation();
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className={`text-xs w-24 outline-none border-b bg-transparent ${
+                                            isDark
+                                                ? 'text-indigo-300 border-indigo-500'
+                                                : 'text-indigo-600 border-indigo-400'
+                                        }`}
+                                    />
+                                ) : (
+                                    <span>{tab.label}</span>
+                                )}
+                                {queryTabs.length > 1 && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            closeQueryTab(tab.id);
+                                        }}
+                                        className={`opacity-0 group-hover:opacity-100 flex items-center justify-center h-3.5 w-3.5 rounded transition-all ml-0.5 ${
+                                            isDark
+                                                ? 'text-neutral-500 hover:text-neutral-200 hover:bg-neutral-600'
+                                                : 'text-gray-400 hover:text-gray-700 hover:bg-gray-300'
+                                        }`}
+                                        title="Close tab"
+                                        aria-label={`Close ${tab.label}`}
+                                    >
+                                        <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+
+                        {/* Add new tab button */}
+                        <button
+                            onClick={addQueryTab}
+                            className={`flex items-center justify-center h-6 w-6 ml-1 shrink-0 rounded transition-colors text-xs ${
+                                isDark
+                                    ? 'text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700'
+                                    : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'
+                            }`}
+                            title="New query tab (Ctrl+T / Cmd+T)"
+                            aria-label="Add query tab"
+                        >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                        </button>
+                    </div>
+
                     {/* SQL Editor */}
                     <div className={`shrink-0 border-b ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
                         <SqlEditor
                             onExecute={handleExecute}
                             editorRef={editorRef}
                             theme={theme}
+                            defaultValue={queryTabs.find((t) => t.id === activeQueryTabId)?.sql ?? 'SELECT TOP 10 * FROM account'}
                         />
                     </div>
 
