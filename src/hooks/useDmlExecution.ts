@@ -102,7 +102,7 @@ export function useDmlExecution() {
         const result = await window.dataverseAPI.fetchXmlQuery(fetchXml);
         const rows: Record<string, unknown>[] = result.value ?? [];
         const pkField = table + 'id';
-        const ids = rows.map((r) => r[pkField] as string).filter(Boolean);
+        const ids = [...new Set(rows.map((r) => r[pkField] as string).filter(Boolean))];
         return { ids, rows };
     }
 
