@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { tokenize, parseStatement, generateFetchXml, SqlParseError } from '../sql';
+import type { SelectStatement } from '../sql/types';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -33,24 +34,26 @@ const ANNOTATION_MAP: [RegExp, string][] = [
 ];
 
 /**
- * Transform Dataverse result rows: rename OData annotation keys to
- * readable column names and drop pure metadata keys (e.g. @odata.etag).
- *
- * Example:
- *   _ownerid_value@OData.Community.Display.V1.FormattedValue → _ownerid_value_formatted
- *   accountratingcode@OData.Community.Display.V1.FormattedValue → accountratingcode_formatted
- *   @odata.etag → dropped
+ * Transform Dataverse result rows:
+ * 1. Rename OData annotation keys to readable suffixes
+ * 2. Create friendly aliases for lookup columns:
+ *    _ownerid_value         → also as ownerid (GUID)
+ *    _ownerid_value_formatted → also as owneridname (display name)
+ * 3. Create xxxname alias for any column's formatted value:
+ *    accountratingcode_formatted → also as accountratingcodename
+ * 4. Drop pure metadata keys (@odata.etag)
  */
 function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
     if (rows.length === 0) return rows;
     return rows.map((row) => {
         const cleaned: Record<string, unknown> = {};
+
+        // First pass: keep plain keys and rename annotations
         for (const [key, value] of Object.entries(row)) {
             if (!key.includes('@')) {
                 cleaned[key] = value;
                 continue;
             }
-            // Try to rename known annotations
             let renamed = false;
             for (const [pattern, suffix] of ANNOTATION_MAP) {
                 if (pattern.test(key)) {
@@ -60,11 +63,30 @@ function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
                     break;
                 }
             }
-            // Drop unknown @-keys (e.g. @odata.etag)
-            if (!renamed) {
-                // skip
+            if (!renamed) { /* drop unknown @-keys */ }
+        }
+
+        // Second pass: create friendly aliases for lookups and formatted values
+        for (const [key, value] of Object.entries({ ...cleaned })) {
+            // _xxxid_value → xxxid (GUID alias)
+            const lookupMatch = key.match(/^_(.+)_value$/);
+            if (lookupMatch && !(lookupMatch[1] in cleaned)) {
+                cleaned[lookupMatch[1]] = value;
+            }
+
+            // _xxxid_value_formatted → xxxidname (display name alias)
+            const lookupFmtMatch = key.match(/^_(.+)_value_formatted$/);
+            if (lookupFmtMatch && !(lookupFmtMatch[1] + 'name' in cleaned)) {
+                cleaned[lookupFmtMatch[1] + 'name'] = value;
+            }
+
+            // xxx_formatted → xxxname (option set / general formatted alias)
+            const fmtMatch = key.match(/^(.+)_formatted$/);
+            if (fmtMatch && !key.startsWith('_') && !(fmtMatch[1] + 'name' in cleaned)) {
+                cleaned[fmtMatch[1] + 'name'] = value;
             }
         }
+
         return cleaned;
     });
 }
@@ -73,6 +95,35 @@ function extractColumns(rows: Record<string, unknown>[]): string[] {
     if (rows.length === 0) return [];
     return Object.keys(rows[0]);
 }
+
+/**
+ * Rewrite virtual column names in a SelectStatement before FetchXML generation.
+ * Dataverse doesn't have `xxxname` attributes — they are formatted values of
+ * the base lookup/optionset column. This rewrites the AST so the correct base
+ * column is requested in FetchXML, and the friendly alias appears in results
+ * via the cleanRows annotation mapping.
+ *
+ * Examples:
+ *   owneridname  → ownerid  (lookup display name)
+ *   statuscodename → statuscode (optionset label)
+ */
+function rewriteVirtualColumns(stmt: SelectStatement): SelectStatement {
+    let changed = false;
+    const newColumns = stmt.columns.map((col) => {
+        if ('function' in col) return col; // aggregate — skip
+        if (col.column === '*') return col;
+        const name = col.column;
+        // If column ends with 'name' and is more than just 'name', strip it
+        if (name.length > 4 && name.endsWith('name')) {
+            const base = name.slice(0, -4); // e.g. owneridname → ownerid
+            changed = true;
+            return { ...col, column: base };
+        }
+        return col;
+    });
+    return changed ? { ...stmt, columns: newColumns } : stmt;
+}
+
 
 function xmlEscape(value: string): string {
     return value
@@ -147,7 +198,8 @@ export function useQueryExecution(): QueryExecutionReturn {
                 if (stmt.type !== 'select') {
                     throw new Error('This is a DML statement. Use the DML execution path.');
                 }
-                const fetchXml = generateFetchXml(stmt);
+                const rewritten = rewriteVirtualColumns(stmt);
+                const fetchXml = generateFetchXml(rewritten);
 
                 const { rows, pagingCookie } = await runFetchXml(fetchXml);
 
