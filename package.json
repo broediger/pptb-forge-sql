@@ -1,0 +1,45 @@
+{
+    "name": "pptb-forge-sql",
+    "version": "0.1.0",
+    "displayName": "Forge SQL",
+    "description": "Write and execute SQL against Dataverse — SELECT, INSERT, UPDATE, and DELETE. Translates to FetchXML and Web API calls, with   ",
+    "main": "index.html",
+    "icon": "src/assets/icon.svg",
+    "author": "Power Platform ToolBox",
+    "license": "MIT",
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "scripts": {
+        "build": "tsc && vite build && rm -f dist/assets/*.worker-*.js",
+        "dev": "vite",
+        "watch": "vite build --watch",
+        "preview": "vite preview",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "finalize-package": "npm shrinkwrap"
+    },
+    "dependencies": {
+        "@monaco-editor/react": "^4.7.0",
+        "@tailwindcss/vite": "^4.2.2",
+        "@tanstack/react-table": "^8.21.3",
+        "monaco-editor": "^0.55.1",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "tailwindcss": "^4.2.2",
+        "zustand": "^5.0.12"
+    },
+    "devDependencies": {
+        "@pptb/types": "^1.2.0",
+        "@types/react": "^18.3.12",
+        "@types/react-dom": "^18.3.1",
+        "@vitejs/plugin-react": "^4.3.4",
+        "typescript": "^5.6.3",
+        "vite": "^7.1.11",
+        "vitest": "^4.1.2"
+    },
+    "files": [
+        "dist",
+        "npm-shrinkwrap.json"
+    ]
+}
