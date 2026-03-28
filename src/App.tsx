@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type * as MonacoType from 'monaco-editor';
 import { SqlEditor } from './components/SqlEditor';
 import { ResultsGrid } from './components/ResultsGrid';
@@ -24,6 +24,7 @@ export default function App() {
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
     const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
+    const pendingDmlSqlRef = useRef<string>('');
 
     const { theme, isDark } = useTheme();
     const { connection, isLoading: connectionLoading, refreshConnection } = useConnection();
@@ -50,6 +51,19 @@ export default function App() {
 
     useToolboxEvents(handleToolboxEvent);
 
+    // Add DML results to history when they resolve
+    useEffect(() => {
+        if (!dml.dmlResult) return;
+        addEntry({
+            sql: pendingDmlSqlRef.current,
+            timestamp: Date.now(),
+            executionTime: dml.dmlResult.executionTime,
+            rowCount: dml.dmlResult.affectedCount,
+            statementType: dml.dmlResult.operation,
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dml.dmlResult]);
+
     const handleExecute = useCallback(
         async (sql: string) => {
             const trimmed = sql.trim();
@@ -68,9 +82,8 @@ export default function App() {
             }
 
             if (isDml) {
+                pendingDmlSqlRef.current = trimmed;
                 await dml.execute(trimmed);
-                // Record in history using dmlResult — will be set after execute resolves
-                // (history is added when dmlResult is available; see effect below)
                 return;
             }
 
@@ -82,6 +95,7 @@ export default function App() {
                 executionTime: result.executionTime ?? undefined,
                 rowCount: result.rowCount ?? undefined,
                 error: result.error ?? undefined,
+                statementType: 'SELECT',
             });
         },
         [execute, addEntry, dml]

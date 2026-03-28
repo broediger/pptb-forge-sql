@@ -8,6 +8,7 @@ export interface QueryHistoryEntry {
   rowCount?: number;
   error?: string;
   pinned?: boolean;
+  statementType?: 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
 }
 
 interface HistoryStore {

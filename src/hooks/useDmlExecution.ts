@@ -142,6 +142,7 @@ export function useDmlExecution() {
 
         const end = performance.now();
         const executionTime = Math.round(end - start);
+        const wasCancelled = cancelledRef.current;
 
         setProgress(null);
         setIsExecuting(false);
@@ -149,14 +150,26 @@ export function useDmlExecution() {
         const affectedCount = createdIds.length;
         setDmlResult({ operation: 'INSERT', affectedCount, createdIds, executionTime });
 
-        try {
-            window.toolboxAPI.utils.showNotification({
-                title: 'Insert Complete',
-                body: `${affectedCount} record${affectedCount !== 1 ? 's' : ''} created in ${executionTime}ms`,
-                type: 'success',
-            });
-        } catch {
-            // toolboxAPI may not be available
+        if (wasCancelled) {
+            try {
+                window.toolboxAPI.utils.showNotification({
+                    title: 'Operation Cancelled',
+                    body: `${affectedCount} of ${total} records processed before cancellation`,
+                    type: 'warning',
+                });
+            } catch {
+                // toolboxAPI may not be available
+            }
+        } else {
+            try {
+                window.toolboxAPI.utils.showNotification({
+                    title: 'Insert Complete',
+                    body: `${affectedCount} record${affectedCount !== 1 ? 's' : ''} created in ${executionTime}ms`,
+                    type: 'success',
+                });
+            } catch {
+                // toolboxAPI may not be available
+            }
         }
 
         addToHistory(sql, executionTime, affectedCount);
@@ -213,6 +226,7 @@ export function useDmlExecution() {
         setProgress({ operation: 'UPDATE', total, completed: 0, cancelled: false });
 
         const start = performance.now();
+        let completedCount = 0;
 
         for (let i = 0; i < ids.length; i++) {
             if (cancelledRef.current) {
@@ -220,29 +234,42 @@ export function useDmlExecution() {
                 break;
             }
             await window.dataverseAPI.update(table, ids[i], setValues);
-            setProgress({ operation: 'UPDATE', total, completed: i + 1, cancelled: false });
+            completedCount = i + 1;
+            setProgress({ operation: 'UPDATE', total, completed: completedCount, cancelled: false });
         }
 
         const end = performance.now();
         const executionTime = Math.round(end - start);
-        const affectedCount = ids.length;
+        const wasCancelled = cancelledRef.current;
 
         setProgress(null);
         setIsExecuting(false);
         setConfirmationNeeded(null);
-        setDmlResult({ operation: 'UPDATE', affectedCount, executionTime });
+        setDmlResult({ operation: 'UPDATE', affectedCount: completedCount, executionTime });
 
-        try {
-            window.toolboxAPI.utils.showNotification({
-                title: 'Update Complete',
-                body: `${affectedCount} record${affectedCount !== 1 ? 's' : ''} updated in ${executionTime}ms`,
-                type: 'success',
-            });
-        } catch {
-            // toolboxAPI may not be available
+        if (wasCancelled) {
+            try {
+                window.toolboxAPI.utils.showNotification({
+                    title: 'Operation Cancelled',
+                    body: `${completedCount} of ${total} records processed before cancellation`,
+                    type: 'warning',
+                });
+            } catch {
+                // toolboxAPI may not be available
+            }
+        } else {
+            try {
+                window.toolboxAPI.utils.showNotification({
+                    title: 'Update Complete',
+                    body: `${completedCount} record${completedCount !== 1 ? 's' : ''} updated in ${executionTime}ms`,
+                    type: 'success',
+                });
+            } catch {
+                // toolboxAPI may not be available
+            }
         }
 
-        addToHistory(sql, executionTime, affectedCount);
+        addToHistory(sql, executionTime, completedCount);
     }
 
     // ── DELETE ──
@@ -281,6 +308,7 @@ export function useDmlExecution() {
         setProgress({ operation: 'DELETE', total, completed: 0, cancelled: false });
 
         const start = performance.now();
+        let completedCount = 0;
 
         for (let i = 0; i < ids.length; i++) {
             if (cancelledRef.current) {
@@ -288,29 +316,42 @@ export function useDmlExecution() {
                 break;
             }
             await window.dataverseAPI.delete(table, ids[i]);
-            setProgress({ operation: 'DELETE', total, completed: i + 1, cancelled: false });
+            completedCount = i + 1;
+            setProgress({ operation: 'DELETE', total, completed: completedCount, cancelled: false });
         }
 
         const end = performance.now();
         const executionTime = Math.round(end - start);
-        const affectedCount = ids.length;
+        const wasCancelled = cancelledRef.current;
 
         setProgress(null);
         setIsExecuting(false);
         setConfirmationNeeded(null);
-        setDmlResult({ operation: 'DELETE', affectedCount, executionTime });
+        setDmlResult({ operation: 'DELETE', affectedCount: completedCount, executionTime });
 
-        try {
-            window.toolboxAPI.utils.showNotification({
-                title: 'Delete Complete',
-                body: `${affectedCount} record${affectedCount !== 1 ? 's' : ''} deleted in ${executionTime}ms`,
-                type: 'success',
-            });
-        } catch {
-            // toolboxAPI may not be available
+        if (wasCancelled) {
+            try {
+                window.toolboxAPI.utils.showNotification({
+                    title: 'Operation Cancelled',
+                    body: `${completedCount} of ${total} records processed before cancellation`,
+                    type: 'warning',
+                });
+            } catch {
+                // toolboxAPI may not be available
+            }
+        } else {
+            try {
+                window.toolboxAPI.utils.showNotification({
+                    title: 'Delete Complete',
+                    body: `${completedCount} record${completedCount !== 1 ? 's' : ''} deleted in ${executionTime}ms`,
+                    type: 'success',
+                });
+            } catch {
+                // toolboxAPI may not be available
+            }
         }
 
-        addToHistory(sql, executionTime, affectedCount);
+        addToHistory(sql, executionTime, completedCount);
     }
 
     // ── History helper (best-effort) ──

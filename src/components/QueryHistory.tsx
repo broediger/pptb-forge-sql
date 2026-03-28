@@ -23,6 +23,31 @@ function formatRelativeTime(timestamp: number): string {
   });
 }
 
+function StatementTypeBadge({ type, isDark }: { type: QueryHistoryEntry['statementType']; isDark: boolean }) {
+  if (!type) return null;
+
+  const styles: Record<NonNullable<QueryHistoryEntry['statementType']>, string> = {
+    SELECT: isDark
+      ? 'bg-blue-900/60 text-blue-300 border border-blue-700/50'
+      : 'bg-blue-100 text-blue-700 border border-blue-200',
+    INSERT: isDark
+      ? 'bg-green-900/60 text-green-300 border border-green-700/50'
+      : 'bg-green-100 text-green-700 border border-green-200',
+    UPDATE: isDark
+      ? 'bg-amber-900/60 text-amber-300 border border-amber-700/50'
+      : 'bg-amber-100 text-amber-700 border border-amber-200',
+    DELETE: isDark
+      ? 'bg-red-900/60 text-red-300 border border-red-700/50'
+      : 'bg-red-100 text-red-700 border border-red-200',
+  };
+
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${styles[type]}`}>
+      {type}
+    </span>
+  );
+}
+
 function HistoryEntryRow({
   entry,
   onSelect,
@@ -57,11 +82,14 @@ function HistoryEntryRow({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Top row: time + action buttons */}
+      {/* Top row: time + badge + action buttons */}
       <div className="flex items-center justify-between gap-2">
-        <span className={`text-xs ${isDark ? 'text-neutral-400' : 'text-gray-500'}`}>
-          {formatRelativeTime(entry.timestamp)}
-        </span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className={`text-xs shrink-0 ${isDark ? 'text-neutral-400' : 'text-gray-500'}`}>
+            {formatRelativeTime(entry.timestamp)}
+          </span>
+          <StatementTypeBadge type={entry.statementType} isDark={isDark} />
+        </div>
         <div className="flex items-center gap-1">
           {/* Pin button — always visible */}
           <button
