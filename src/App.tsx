@@ -409,6 +409,7 @@ export default function App() {
                                         hasMore={pagingCookie != null}
                                         isLoading={isExecuting}
                                         isDark={isDark}
+                                        connectionUrl={connection?.url}
                                     />
                                 ) : (
                                     <div className="flex h-full items-center justify-center">

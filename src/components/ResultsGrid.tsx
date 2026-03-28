@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback, useRef, useState } from 'react';
 import {
     useReactTable,
     getCoreRowModel,
@@ -7,6 +7,7 @@ import {
     createColumnHelper,
     type SortingState,
     type ColumnDef,
+    type Header,
 } from '@tanstack/react-table';
 
 interface ResultsGridProps {
@@ -16,24 +17,81 @@ interface ResultsGridProps {
     hasMore?: boolean;
     isLoading?: boolean;
     isDark?: boolean;
+    connectionUrl?: string | null;
+}
+
+// GUID pattern: 8-4-4-4-12 hex chars
+const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isGuid(value: unknown): value is string {
+    return typeof value === 'string' && GUID_REGEX.test(value);
+}
+
+// Derive entity logical name from a column name like "accountid" or "_parentcustomerid_value"
+function guessEntityFromColumn(columnName: string): string | null {
+    // Lookup columns: _xxxid_value → xxx
+    const lookupMatch = columnName.match(/^_(.+)_value$/);
+    if (lookupMatch) {
+        const ref = lookupMatch[1];
+        // Remove trailing "id" to get entity name
+        return ref.endsWith('id') ? ref.slice(0, -2) : ref;
+    }
+    // Primary key columns: entitynameid → entityname
+    if (columnName.endsWith('id') && columnName.length > 2) {
+        return columnName.slice(0, -2);
+    }
+    return null;
 }
 
 function formatCellValue(value: unknown): string {
-    if (value === null || value === undefined) {
-        return '';
-    }
-    if (typeof value === 'boolean') {
-        return value ? 'true' : 'false';
-    }
-    if (typeof value === 'object') {
-        return JSON.stringify(value);
-    }
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
 }
 
 function isNullish(value: unknown): boolean {
     return value === null || value === undefined;
 }
+
+// ── Column resize handle ──
+
+function ResizeHandle<T>({
+    header,
+    isDark,
+}: {
+    header: Header<T, unknown>;
+    isDark: boolean;
+}) {
+    return (
+        <div
+            onMouseDown={header.getResizeHandler()}
+            onTouchStart={header.getResizeHandler()}
+            className={`absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none ${
+                header.column.getIsResizing()
+                    ? isDark ? 'bg-blue-500' : 'bg-blue-400'
+                    : isDark ? 'bg-gray-600 hover:bg-gray-500' : 'bg-gray-300 hover:bg-gray-400'
+            }`}
+        />
+    );
+}
+
+// ── Spinner component ──
+
+function Spinner() {
+    return (
+        <svg
+            className="animate-spin h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+        >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+    );
+}
+
+// ── Main component ──
 
 const columnHelper = createColumnHelper<Record<string, unknown>>();
 
@@ -44,8 +102,21 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
     hasMore = false,
     isLoading = false,
     isDark = false,
+    connectionUrl,
 }) => {
-    const [sorting, setSorting] = React.useState<SortingState>([]);
+    const [sorting, setSorting] = useState<SortingState>([]);
+    const tableContainerRef = useRef<HTMLDivElement>(null);
+
+    const openRecord = useCallback(
+        (entityName: string, recordId: string) => {
+            if (!connectionUrl) return;
+            // Dataverse record URL: https://org.crm.dynamics.com/main.aspx?etn=account&id={guid}&pagetype=entityrecord
+            const base = connectionUrl.replace(/\/+$/, '');
+            const url = `${base}/main.aspx?etn=${encodeURIComponent(entityName)}&id=${encodeURIComponent(recordId)}&pagetype=entityrecord`;
+            window.open(url, '_blank');
+        },
+        [connectionUrl],
+    );
 
     const columnDefs = useMemo<ColumnDef<Record<string, unknown>>[]>(
         () =>
@@ -54,6 +125,10 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                     id: col,
                     header: col,
                     enableSorting: true,
+                    enableResizing: true,
+                    size: 180,
+                    minSize: 60,
+                    maxSize: 600,
                     sortingFn: (rowA, rowB, columnId) => {
                         const a = rowA.getValue(columnId);
                         const b = rowB.getValue(columnId);
@@ -68,7 +143,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                     },
                 })
             ),
-        [columns]
+        [columns],
     );
 
     const table = useReactTable({
@@ -78,6 +153,8 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
         onSortingChange: setSorting,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
+        columnResizeMode: 'onChange',
+        enableColumnResizing: true,
     });
 
     if (data.length === 0 && !isLoading) {
@@ -90,8 +167,21 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
 
     return (
         <div className="flex flex-col h-full">
-            <div className="overflow-auto max-h-[calc(100vh-16rem)] flex-1">
-                <table className="w-full text-sm border-collapse">
+            {/* Loading overlay when re-executing with existing results */}
+            {isLoading && data.length > 0 && (
+                <div className={`flex items-center gap-2 px-3 py-1.5 text-xs border-b ${
+                    isDark ? 'bg-blue-950/40 border-blue-800/40 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-600'
+                }`}>
+                    <Spinner />
+                    Executing query…
+                </div>
+            )}
+
+            <div ref={tableContainerRef} className="overflow-auto flex-1">
+                <table
+                    className="text-sm border-collapse"
+                    style={{ width: table.getCenterTotalSize() }}
+                >
                     <thead>
                         {table.getHeaderGroups().map((headerGroup) => (
                             <tr key={headerGroup.id}>
@@ -100,26 +190,23 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                     return (
                                         <th
                                             key={header.id}
-                                            className={`sticky top-0 text-left px-3 py-2 font-medium border-b cursor-pointer select-none whitespace-nowrap z-10 ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}
+                                            className={`sticky top-0 text-left px-3 py-2 font-medium cursor-pointer select-none whitespace-nowrap z-10 relative ${
+                                                isDark
+                                                    ? 'bg-gray-800 text-gray-300 border-b border-r border-gray-600'
+                                                    : 'bg-gray-100 text-gray-700 border-b border-r border-gray-300'
+                                            }`}
+                                            style={{ width: header.getSize() }}
                                             onClick={header.column.getToggleSortingHandler()}
                                         >
                                             <span className="flex items-center gap-1">
                                                 {flexRender(
                                                     header.column.columnDef.header,
-                                                    header.getContext()
+                                                    header.getContext(),
                                                 )}
-                                                {sorted === 'asc' && (
-                                                    <span className="text-gray-400">▲</span>
-                                                )}
-                                                {sorted === 'desc' && (
-                                                    <span className="text-gray-400">▼</span>
-                                                )}
-                                                {!sorted && (
-                                                    <span className="text-gray-300 opacity-0 group-hover:opacity-100">
-                                                        ▲
-                                                    </span>
-                                                )}
+                                                {sorted === 'asc' && <span className="text-gray-400">▲</span>}
+                                                {sorted === 'desc' && <span className="text-gray-400">▼</span>}
                                             </span>
+                                            <ResizeHandle header={header} isDark={isDark} />
                                         </th>
                                     );
                                 })}
@@ -136,15 +223,41 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                     const rawValue = cell.getValue();
                                     const displayText = formatCellValue(rawValue);
                                     const isNull = isNullish(rawValue);
+                                    const colId = cell.column.id;
+                                    const guidValue = isGuid(rawValue) ? rawValue : null;
+                                    const entityName = guidValue ? guessEntityFromColumn(colId) : null;
+                                    const canOpenRecord = guidValue && entityName && connectionUrl;
 
                                     return (
                                         <td
                                             key={cell.id}
-                                            className={`px-3 py-1.5 border-b truncate max-w-xs ${isDark ? 'border-gray-700 text-gray-200' : 'border-gray-100 text-gray-800'}`}
+                                            className={`px-3 py-1.5 truncate ${
+                                                isDark
+                                                    ? 'border-b border-r border-gray-700 text-gray-200'
+                                                    : 'border-b border-r border-gray-200 text-gray-800'
+                                            }`}
+                                            style={{ width: cell.column.getSize(), maxWidth: cell.column.getSize() }}
                                             title={isNull ? 'null' : displayText}
                                         >
                                             {isNull ? (
                                                 <span className="text-gray-400 italic">null</span>
+                                            ) : canOpenRecord ? (
+                                                <span className="flex items-center gap-1">
+                                                    <span className="truncate font-mono text-xs">{displayText}</span>
+                                                    <button
+                                                        onClick={() => openRecord(entityName, guidValue)}
+                                                        className={`shrink-0 p-0.5 rounded transition-colors ${
+                                                            isDark
+                                                                ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-900/40'
+                                                                : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'
+                                                        }`}
+                                                        title={`Open ${entityName} record`}
+                                                    >
+                                                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                                                        </svg>
+                                                    </button>
+                                                </span>
                                             ) : (
                                                 displayText
                                             )}
@@ -157,28 +270,9 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                 </table>
             </div>
 
-            {isLoading && (
-                <div className="flex items-center justify-center gap-2 py-3 text-sm text-gray-500">
-                    <svg
-                        className="animate-spin h-4 w-4 text-gray-400"
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                    >
-                        <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                        />
-                        <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                        />
-                    </svg>
+            {isLoading && data.length === 0 && (
+                <div className={`flex items-center justify-center gap-2 py-3 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                    <Spinner />
                     Loading...
                 </div>
             )}
@@ -187,7 +281,11 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                 <div className={`flex justify-center py-3 border-t ${isDark ? 'border-gray-700' : 'border-gray-100'}`}>
                     <button
                         onClick={onLoadMore}
-                        className={`px-4 py-1.5 text-sm font-medium rounded border transition-colors cursor-pointer ${isDark ? 'text-gray-300 bg-gray-700 hover:bg-gray-600 border-gray-600' : 'text-gray-600 bg-gray-100 hover:bg-gray-200 border-gray-200'}`}
+                        className={`px-4 py-1.5 text-sm font-medium rounded border transition-colors cursor-pointer ${
+                            isDark
+                                ? 'text-gray-300 bg-gray-700 hover:bg-gray-600 border-gray-600'
+                                : 'text-gray-600 bg-gray-100 hover:bg-gray-200 border-gray-200'
+                        }`}
                     >
                         Load More
                     </button>
