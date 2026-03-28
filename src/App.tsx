@@ -220,7 +220,7 @@ export default function App() {
                     {/* Schema explorer — hidden when collapsed */}
                     {!sidebarCollapsed && (
                         <div className="flex-1 min-h-0 overflow-hidden">
-                            <SchemaExplorer onInsertText={handleInsertText} isDark={isDark} />
+                            <SchemaExplorer onInsertText={handleInsertText} isDark={isDark} isConnected={isConnected} />
                         </div>
                     )}
                 </div>

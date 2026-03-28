@@ -4,6 +4,7 @@ import { useSchemaStore, type EntityInfo } from '../stores/schemaStore';
 interface SchemaExplorerProps {
   onInsertText?: (text: string) => void;
   isDark?: boolean;
+  isConnected?: boolean;
 }
 
 const ATTRIBUTE_TYPE_COLORS: Record<string, string> = {
@@ -149,16 +150,18 @@ function EntityRow({
   );
 }
 
-export function SchemaExplorer({ onInsertText, isDark = false }: SchemaExplorerProps) {
+export function SchemaExplorer({ onInsertText, isDark = false, isConnected = false }: SchemaExplorerProps) {
   const store = useSchemaStore();
   const [search, setSearch] = useState('');
 
+  // Load entities only once the connection is ready, and auto-retry
+  // when the connection arrives (covers the initial race where the
+  // tool renders before PPTB has established the connection).
   useEffect(() => {
-    if (store.entities.length === 0 && !store.loading) {
+    if (isConnected && store.entities.length === 0 && !store.loading) {
       store.loadEntities();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isConnected, store]);
 
   const filtered = store.entities.filter((e) =>
     search.trim() === ''
