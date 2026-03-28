@@ -25,6 +25,55 @@ interface QueryExecutionReturn extends QueryExecutionState {
 
 const PAGING_COOKIE_KEY = '@Microsoft.Dynamics.CRM.fetchxmlpagingcookie';
 
+// OData annotation suffixes → clean column name suffixes
+const ANNOTATION_MAP: [RegExp, string][] = [
+    [/@OData\.Community\.Display\.V1\.FormattedValue$/, '_formatted'],
+    [/@Microsoft\.Dynamics\.CRM\.lookuplogicalname$/, '_type'],
+    [/@Microsoft\.Dynamics\.CRM\.associatednavigationproperty$/, '_nav'],
+];
+
+/**
+ * Transform Dataverse result rows: rename OData annotation keys to
+ * readable column names and drop pure metadata keys (e.g. @odata.etag).
+ *
+ * Example:
+ *   _ownerid_value@OData.Community.Display.V1.FormattedValue → _ownerid_value_formatted
+ *   accountratingcode@OData.Community.Display.V1.FormattedValue → accountratingcode_formatted
+ *   @odata.etag → dropped
+ */
+function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+    if (rows.length === 0) return rows;
+    return rows.map((row) => {
+        const cleaned: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(row)) {
+            if (!key.includes('@')) {
+                cleaned[key] = value;
+                continue;
+            }
+            // Try to rename known annotations
+            let renamed = false;
+            for (const [pattern, suffix] of ANNOTATION_MAP) {
+                if (pattern.test(key)) {
+                    const baseCol = key.replace(pattern, '');
+                    cleaned[baseCol + suffix] = value;
+                    renamed = true;
+                    break;
+                }
+            }
+            // Drop unknown @-keys (e.g. @odata.etag)
+            if (!renamed) {
+                // skip
+            }
+        }
+        return cleaned;
+    });
+}
+
+function extractColumns(rows: Record<string, unknown>[]): string[] {
+    if (rows.length === 0) return [];
+    return Object.keys(rows[0]);
+}
+
 function xmlEscape(value: string): string {
     return value
         .replace(/&/g, '&amp;')
@@ -66,7 +115,7 @@ export function useQueryExecution(): QueryExecutionReturn {
             }
 
             const result = await window.dataverseAPI.fetchXmlQuery(fetchXml);
-            const rows = result.value ?? [];
+            const rows = cleanRows(result.value ?? []);
             const pagingCookie = (result[PAGING_COOKIE_KEY] as string | undefined) ?? null;
             return { rows, pagingCookie };
         },
@@ -105,10 +154,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 const end = performance.now();
                 const executionTime = Math.round(end - start);
 
-                const columns =
-                    rows.length > 0
-                        ? Object.keys(rows[0]).filter((key) => !key.includes('@'))
-                        : [];
+                const columns = extractColumns(rows);
 
                 setState((prev) => ({
                     ...prev,
@@ -219,9 +265,8 @@ export function useQueryExecution(): QueryExecutionReturn {
 
             const allResults = [...snapshotResults, ...rows];
 
-            const columns =
-                allResults.length > 0
-                    ? Object.keys(allResults[0]).filter((key) => !key.includes('@'))
+            const columns = allResults.length > 0
+                    ? extractColumns(allResults)
                     : snapshotColumns;
 
             setState((prev) => ({
