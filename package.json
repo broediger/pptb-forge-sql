@@ -5,8 +5,18 @@
     "description": "Write and execute SQL against Dataverse — SELECT, INSERT, UPDATE, and DELETE. Translates to FetchXML and Web API calls, with   ",
     "main": "index.html",
     "icon": "src/assets/icon.svg",
-    "author": "Power Platform ToolBox",
+    "author": "Björn Rödiger <bjoern@roediger.dev>",
     "license": "MIT",
+    "contributors": [
+        {
+            "name": "Björn Rödiger",
+            "email": "bjoern@roediger.dev"
+        }
+    ],
+    "configurations": {
+        "repository": "https://github.com/broediger/pptb-forge-sql",
+        "readmeUrl": "https://raw.githubusercontent.com/broediger/pptb-forge-sql/main/README.md"
+    },
     "engines": {
         "node": ">=18.0.0"
     },
