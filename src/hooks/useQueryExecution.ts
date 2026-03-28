@@ -97,6 +97,27 @@ function extractColumns(rows: Record<string, unknown>[]): string[] {
 }
 
 /**
+ * Derive the display columns from the original SELECT AST.
+ * For `SELECT *`, returns null (meaning: show all columns from results).
+ * For explicit columns, returns the list of requested names (including
+ * virtual names like owneridname) so only those are displayed.
+ */
+function getRequestedColumns(stmt: SelectStatement): string[] | null {
+    const hasStar = stmt.columns.some(
+        (c) => !('function' in c) && c.column === '*' && !c.table,
+    );
+    if (hasStar) return null; // SELECT * → show everything
+
+    return stmt.columns.map((c) => {
+        if ('function' in c) {
+            // Aggregate: use alias or auto-generated name
+            return c.alias ?? `${c.function.toLowerCase()}_${c.column.column === '*' ? 'all' : c.column.column}`;
+        }
+        return c.alias ?? c.column;
+    });
+}
+
+/**
  * Rewrite virtual column names in a SelectStatement before FetchXML generation.
  * Dataverse doesn't have `xxxname` attributes — they are formatted values of
  * the base lookup/optionset column. This rewrites the AST so the correct base
@@ -198,6 +219,8 @@ export function useQueryExecution(): QueryExecutionReturn {
                 if (stmt.type !== 'select') {
                     throw new Error('This is a DML statement. Use the DML execution path.');
                 }
+                // Capture originally requested columns before rewriting
+                const requestedCols = getRequestedColumns(stmt);
                 const rewritten = rewriteVirtualColumns(stmt);
                 const fetchXml = generateFetchXml(rewritten);
 
@@ -206,7 +229,12 @@ export function useQueryExecution(): QueryExecutionReturn {
                 const end = performance.now();
                 const executionTime = Math.round(end - start);
 
-                const columns = extractColumns(rows);
+                // If the user specified explicit columns, only show those
+                // (matched against the cleaned result keys). Otherwise show all.
+                const allColumns = extractColumns(rows);
+                const columns = requestedCols
+                    ? requestedCols.filter((c) => allColumns.includes(c))
+                    : allColumns;
 
                 setState((prev) => ({
                     ...prev,
