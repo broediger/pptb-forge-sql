@@ -21,6 +21,22 @@ import { tokenize, parseStatement } from './sql';
 
 type ActiveTab = 'results' | 'fetchxml' | 'history';
 
+interface TabResults {
+    results: Record<string, unknown>[] | null;
+    columns: string[];
+    fetchXml: string | null;
+    error: string | null;
+    executionTime: number | null;
+    rowCount: number | null;
+    dmlResult: import('./hooks/useDmlExecution').DmlResult | null;
+    dmlError: string | null;
+}
+
+const EMPTY_TAB_RESULTS: TabResults = {
+    results: null, columns: [], fetchXml: null, error: null,
+    executionTime: null, rowCount: null, dmlResult: null, dmlError: null,
+};
+
 interface QueryTab {
     id: string;
     label: string;
@@ -44,13 +60,48 @@ export default function App() {
     const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
     const pendingDmlSqlRef = useRef<string>('');
 
+    // Per-tab result storage
+    const [tabResults, setTabResults] = useState<Record<string, TabResults>>({ '1': { ...EMPTY_TAB_RESULTS } });
+    const activeTabResults = tabResults[activeQueryTabId] ?? EMPTY_TAB_RESULTS;
+
     const { theme, isDark } = useTheme();
     const { connection, isLoading: connectionLoading, refreshConnection } = useConnection();
-    const { results, columns, fetchXml, error, isExecuting, executionTime, rowCount, pagingCookie, execute, loadNextPage } =
-        useQueryExecution();
+    const queryExec = useQueryExecution();
     const dml = useDmlExecution();
     const { addEntry } = useHistoryStore();
     const { reset: resetSchema } = useSchemaStore();
+
+    // Sync query execution state into the active tab's results whenever it changes
+    useEffect(() => {
+        if (queryExec.results !== null || queryExec.error !== null || queryExec.fetchXml !== null) {
+            setTabResults((prev) => ({
+                ...prev,
+                [activeQueryTabId]: {
+                    ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
+                    results: queryExec.results,
+                    columns: queryExec.columns,
+                    fetchXml: queryExec.fetchXml,
+                    error: queryExec.error,
+                    executionTime: queryExec.executionTime,
+                    rowCount: queryExec.rowCount,
+                },
+            }));
+        }
+    }, [queryExec.results, queryExec.error, queryExec.fetchXml, queryExec.executionTime, queryExec.rowCount, queryExec.columns, activeQueryTabId]);
+
+    // Sync DML results into the active tab
+    useEffect(() => {
+        if (dml.dmlResult !== null || dml.dmlError !== null) {
+            setTabResults((prev) => ({
+                ...prev,
+                [activeQueryTabId]: {
+                    ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
+                    dmlResult: dml.dmlResult,
+                    dmlError: dml.dmlError,
+                },
+            }));
+        }
+    }, [dml.dmlResult, dml.dmlError, activeQueryTabId]);
 
     // Listen for connection changes and reset schema
     const handleToolboxEvent = useCallback(
@@ -82,6 +133,7 @@ export default function App() {
         const newSql = 'SELECT TOP 10 * FROM account';
         setNextTabNum((n) => n + 1);
         setQueryTabs((prev) => [...prev, { id: newId, label: newLabel, sql: newSql }]);
+        setTabResults((prev) => ({ ...prev, [newId]: { ...EMPTY_TAB_RESULTS } }));
         setActiveQueryTabId(newId);
         // Set editor content after state updates have been scheduled
         setTimeout(() => {
@@ -93,11 +145,10 @@ export default function App() {
     const closeQueryTab = useCallback(
         (id: string) => {
             setQueryTabs((prev) => {
-                if (prev.length <= 1) return prev; // don't close last tab
+                if (prev.length <= 1) return prev;
                 const idx = prev.findIndex((t) => t.id === id);
                 const next = prev.filter((t) => t.id !== id);
                 if (id === activeQueryTabId) {
-                    // Switch to nearest neighbor
                     const neighborIdx = Math.min(idx, next.length - 1);
                     const neighbor = next[neighborIdx];
                     setActiveQueryTabId(neighbor.id);
@@ -107,6 +158,12 @@ export default function App() {
                     }, 0);
                 }
                 return next;
+            });
+            // Clean up results for the closed tab
+            setTabResults((prev) => {
+                const copy = { ...prev };
+                delete copy[id];
+                return copy;
             });
         },
         [activeQueryTabId]
@@ -154,9 +211,9 @@ export default function App() {
         addEntry({
             sql: pendingDmlSqlRef.current,
             timestamp: Date.now(),
-            executionTime: dml.dmlResult.executionTime,
-            rowCount: dml.dmlResult.affectedCount,
-            statementType: dml.dmlResult.operation,
+            executionTime: activeTabResults.dmlResult!.executionTime,
+            rowCount: activeTabResults.dmlResult!.affectedCount,
+            statementType: activeTabResults.dmlResult!.operation,
         });
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dml.dmlResult]);
@@ -179,12 +236,31 @@ export default function App() {
             }
 
             if (isDml) {
+                // Clear SELECT results for this tab
+                setTabResults((prev) => ({
+                    ...prev,
+                    [activeQueryTabId]: {
+                        ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
+                        results: null, columns: [], fetchXml: null, error: null,
+                        executionTime: null, rowCount: null,
+                    },
+                }));
                 pendingDmlSqlRef.current = trimmed;
                 await dml.execute(trimmed);
                 return;
             }
 
-            const result = await execute(trimmed);
+            // Clear DML results for this tab
+            dml.clearResult();
+            setTabResults((prev) => ({
+                ...prev,
+                [activeQueryTabId]: {
+                    ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
+                    dmlResult: null, dmlError: null,
+                },
+            }));
+
+            const result = await queryExec.execute(trimmed);
 
             // Auto-switch to FetchXML tab if setting is enabled
             if (useSettingsStore.getState().settings.showFetchXml) {
@@ -200,7 +276,7 @@ export default function App() {
                 statementType: 'SELECT',
             });
         },
-        [execute, addEntry, dml]
+        [queryExec.execute, addEntry, dml, activeQueryTabId]
     );
 
     const handleSelectHistory = useCallback((sql: string) => {
@@ -232,14 +308,14 @@ export default function App() {
     }, []);
 
     const handleExportCsv = useCallback(() => {
-        if (!results) return;
-        exportToCsv(results, columns);
-    }, [results, columns]);
+        if (!activeTabResults.results) return;
+        exportToCsv(activeTabResults.results, activeTabResults.columns);
+    }, [activeTabResults.results, activeTabResults.columns]);
 
     const handleExportJson = useCallback(() => {
-        if (!results) return;
-        exportToJson(results);
-    }, [results]);
+        if (!activeTabResults.results) return;
+        exportToJson(activeTabResults.results);
+    }, [activeTabResults.results]);
 
     // Connection status indicator
     const isConnected = !connectionLoading && connection != null;
@@ -479,14 +555,14 @@ export default function App() {
                                 ].join(' ')}
                             >
                                 {tab.label}
-                                {tab.id === 'results' && rowCount != null && (
-                                    <span className={`ml-1.5 ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>({rowCount})</span>
+                                {tab.id === 'results' && activeTabResults.rowCount != null && (
+                                    <span className={`ml-1.5 ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>({activeTabResults.rowCount})</span>
                                 )}
                             </button>
                         ))}
 
                         {/* Export buttons — only in Results tab when data exists */}
-                        {activeTab === 'results' && results && results.length > 0 && (
+                        {activeTab === 'results' && activeTabResults.results && activeTabResults.results.length > 0 && (
                             <div className="ml-auto flex items-center gap-1 pr-2">
                                 <button
                                     onClick={handleExportCsv}
@@ -530,15 +606,15 @@ export default function App() {
                                         </svg>
                                         Executing…
                                     </div>
-                                ) : dml.dmlError ? (
+                                ) : activeTabResults.dmlError ? (
                                     /* DML error */
                                     <div className="p-4">
                                         <div className={`rounded-md border p-3 ${isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'}`}>
                                             <p className={`text-sm font-medium mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>DML error</p>
-                                            <p className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}>{dml.dmlError}</p>
+                                            <p className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}>{activeTabResults.dmlError}</p>
                                         </div>
                                     </div>
-                                ) : dml.dmlResult ? (
+                                ) : activeTabResults.dmlResult ? (
                                     /* DML success card */
                                     <div className="p-4">
                                         <div className={`rounded-md border p-4 ${isDark ? 'bg-green-950/30 border-green-800/50' : 'bg-green-50 border-green-200'}`}>
@@ -547,28 +623,28 @@ export default function App() {
                                                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                                 </svg>
                                                 <p className={`text-sm font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}>
-                                                    {dml.dmlResult.operation} successful
+                                                    {activeTabResults.dmlResult!.operation} successful
                                                 </p>
                                             </div>
                                             <dl className={`text-xs space-y-1 ${isDark ? 'text-green-300' : 'text-green-700'}`}>
                                                 <div className="flex gap-2">
                                                     <dt className="font-medium">Records affected:</dt>
-                                                    <dd>{dml.dmlResult.affectedCount}</dd>
+                                                    <dd>{activeTabResults.dmlResult!.affectedCount}</dd>
                                                 </div>
                                                 <div className="flex gap-2">
                                                     <dt className="font-medium">Execution time:</dt>
-                                                    <dd>{dml.dmlResult.executionTime}ms</dd>
+                                                    <dd>{activeTabResults.dmlResult!.executionTime}ms</dd>
                                                 </div>
-                                                {dml.dmlResult.createdIds && dml.dmlResult.createdIds.length > 0 && (
+                                                {activeTabResults.dmlResult!.createdIds && activeTabResults.dmlResult!.createdIds.length > 0 && (
                                                     <div className="flex gap-2">
-                                                        <dt className="font-medium">Created ID{dml.dmlResult.createdIds.length > 1 ? 's' : ''}:</dt>
-                                                        <dd className="font-mono break-all">{dml.dmlResult.createdIds.join(', ')}</dd>
+                                                        <dt className="font-medium">Created ID{activeTabResults.dmlResult!.createdIds.length > 1 ? 's' : ''}:</dt>
+                                                        <dd className="font-mono break-all">{activeTabResults.dmlResult!.createdIds.join(', ')}</dd>
                                                     </div>
                                                 )}
                                             </dl>
                                         </div>
                                     </div>
-                                ) : isExecuting && !results ? (
+                                ) : queryExec.isExecuting && !activeTabResults.results ? (
                                     /* SELECT executing spinner */
                                     <div className={`flex h-full items-center justify-center gap-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                                         <svg
@@ -592,20 +668,20 @@ export default function App() {
                                         </svg>
                                         Executing…
                                     </div>
-                                ) : error ? (
+                                ) : activeTabResults.error ? (
                                     <div className="p-4">
                                         <div className={`rounded-md border p-3 ${isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'}`}>
                                             <p className={`text-sm font-medium mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>Query error</p>
-                                            <p className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}>{error}</p>
+                                            <p className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}>{activeTabResults.error}</p>
                                         </div>
                                     </div>
-                                ) : results ? (
+                                ) : activeTabResults.results ? (
                                     <ResultsGrid
-                                        data={results}
-                                        columns={columns}
-                                        onLoadMore={pagingCookie ? loadNextPage : undefined}
-                                        hasMore={pagingCookie != null}
-                                        isLoading={isExecuting}
+                                        data={activeTabResults.results}
+                                        columns={activeTabResults.columns}
+                                        onLoadMore={queryExec.pagingCookie ? queryExec.loadNextPage : undefined}
+                                        hasMore={queryExec.pagingCookie != null}
+                                        isLoading={queryExec.isExecuting}
                                         isDark={isDark}
                                         connectionUrl={connection?.url}
                                     />
@@ -621,7 +697,7 @@ export default function App() {
 
                         {activeTab === 'fetchxml' && (
                             <div className={`h-full ${isDark ? 'bg-[#1e1e1e]' : 'bg-white'}`}>
-                                <FetchXmlInspector fetchXml={fetchXml} theme={theme} />
+                                <FetchXmlInspector fetchXml={activeTabResults.fetchXml} theme={theme} />
                             </div>
                         )}
 
@@ -634,10 +710,10 @@ export default function App() {
 
                     {/* Status bar */}
                     <StatusBar
-                        rowCount={rowCount}
-                        executionTime={executionTime}
-                        error={error}
-                        isExecuting={isExecuting}
+                        rowCount={activeTabResults.rowCount}
+                        executionTime={activeTabResults.executionTime}
+                        error={activeTabResults.error}
+                        isExecuting={queryExec.isExecuting || dml.isExecuting}
                         isDark={isDark}
                     />
                 </div>

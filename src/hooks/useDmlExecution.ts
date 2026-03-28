@@ -473,6 +473,11 @@ export function useDmlExecution() {
         setProgress(null);
     }, []);
 
+    const clearResult = useCallback(() => {
+        setDmlResult(null);
+        setDmlError(null);
+    }, []);
+
     return {
         dmlResult,
         dmlError,
@@ -482,5 +487,6 @@ export function useDmlExecution() {
         execute,
         confirmExecution,
         cancelExecution,
+        clearResult,
     };
 }
