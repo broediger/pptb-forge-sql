@@ -29,17 +29,114 @@ function attributeTypeColor(type: string): string {
   return ATTRIBUTE_TYPE_COLORS[type] ?? 'bg-neutral-700 text-neutral-400';
 }
 
+import type { AttributeInfo } from '../stores/schemaStore';
+
+function ExpandedAttributes({
+  attributes,
+  attributeError,
+  onRetry,
+  onInsertText,
+  filter,
+}: {
+  attributes: AttributeInfo[] | null;
+  attributeError: string | null;
+  onRetry: () => void;
+  onInsertText?: (text: string) => void;
+  filter: string;
+}) {
+  const [attrSearch, setAttrSearch] = useState('');
+  const searchTerm = (filter || attrSearch).toLowerCase();
+
+  const filtered = attributes
+    ? (searchTerm
+        ? attributes.filter((a) =>
+            a.logicalName.toLowerCase().includes(searchTerm) ||
+            a.displayName.toLowerCase().includes(searchTerm) ||
+            a.attributeType.toLowerCase().includes(searchTerm)
+          )
+        : attributes)
+    : null;
+
+  return (
+    <div className="ml-5 border-l border-neutral-700 pl-2">
+      {attributeError ? (
+        <div className="flex items-center gap-2 px-2 py-1.5">
+          <span className="text-xs text-red-400">{attributeError}</span>
+          <button
+            className="rounded px-2 py-0.5 text-xs bg-neutral-700 text-neutral-200 hover:bg-neutral-600 transition-colors"
+            onClick={(e) => { e.stopPropagation(); onRetry(); }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : !attributes ? (
+        <div className="flex items-center gap-1.5 px-2 py-1.5">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
+          <span className="text-xs text-neutral-500">Loading…</span>
+        </div>
+      ) : (
+        <>
+          {/* Attribute filter — only show when entity has many attributes */}
+          {attributes.length > 10 && !filter && (
+            <div className="px-1 py-1">
+              <input
+                type="text"
+                value={attrSearch}
+                onChange={(e) => setAttrSearch(e.target.value)}
+                placeholder="Filter attributes…"
+                className="w-full rounded px-2 py-1 text-xs bg-neutral-700 text-neutral-200 placeholder:text-neutral-500 outline-none focus:ring-1 focus:ring-indigo-500"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+          {filtered && filtered.length === 0 ? (
+            <p className="px-2 py-1 text-xs text-neutral-500">
+              {searchTerm ? 'No matching attributes' : 'No attributes'}
+            </p>
+          ) : (
+            filtered?.map((attr) => (
+              <button
+                key={attr.logicalName}
+                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-neutral-700/50 transition-colors"
+                onClick={() => onInsertText?.(attr.logicalName)}
+                title={attr.displayName !== attr.logicalName ? `${attr.displayName} — Insert "${attr.logicalName}"` : `Insert "${attr.logicalName}"`}
+              >
+                <span className="truncate text-xs text-neutral-300">
+                  {attr.logicalName}
+                </span>
+                <span
+                  className={[
+                    'ml-auto shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none',
+                    attributeTypeColor(attr.attributeType),
+                  ].join(' ')}
+                >
+                  {attr.attributeType}
+                </span>
+              </button>
+            ))
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function EntityRow({
   entity,
   onInsertText,
+  globalAttrFilter,
 }: {
   entity: EntityInfo;
   onInsertText?: (text: string) => void;
+  globalAttrFilter: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [manualExpanded, setManualExpanded] = useState(false);
   const [attributeError, setAttributeError] = useState<string | null>(null);
   const schemaStore = useSchemaStore();
   const attributes = schemaStore.attributes.get(entity.logicalName);
+  const attributeFilter = globalAttrFilter;
+  // Auto-expand when global attribute filter is active
+  const expanded = manualExpanded || (attributeFilter.length > 0 && !!attributes);
 
   const handleToggle = async () => {
     if (!expanded && !attributes) {
@@ -50,7 +147,7 @@ function EntityRow({
         setAttributeError('Failed to load attributes.');
       }
     }
-    setExpanded((v) => !v);
+    setManualExpanded((v) => !v);
   };
 
   return (
@@ -96,55 +193,20 @@ function EntityRow({
 
       {/* Attributes */}
       {expanded && (
-        <div className="ml-5 border-l border-neutral-700 pl-2">
-          {attributeError ? (
-            <div className="flex items-center gap-2 px-2 py-1.5">
-              <span className="text-xs text-red-400">{attributeError}</span>
-              <button
-                className="rounded px-2 py-0.5 text-xs bg-neutral-700 text-neutral-200 hover:bg-neutral-600 transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setAttributeError(null);
-                  schemaStore.loadAttributes(entity.logicalName).then(() => {
-                    if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
-                      setAttributeError('Failed to load attributes.');
-                    }
-                  });
-                }}
-              >
-                Retry
-              </button>
-            </div>
-          ) : !attributes ? (
-            <div className="flex items-center gap-1.5 px-2 py-1.5">
-              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
-              <span className="text-xs text-neutral-500">Loading…</span>
-            </div>
-          ) : attributes.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-neutral-500">No attributes</p>
-          ) : (
-            attributes.map((attr) => (
-              <button
-                key={attr.logicalName}
-                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-neutral-700/50 transition-colors"
-                onClick={() => onInsertText?.(attr.logicalName)}
-                title={`Insert "${attr.logicalName}"`}
-              >
-                <span className="truncate text-xs text-neutral-300">
-                  {attr.logicalName}
-                </span>
-                <span
-                  className={[
-                    'ml-auto shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none',
-                    attributeTypeColor(attr.attributeType),
-                  ].join(' ')}
-                >
-                  {attr.attributeType}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
+        <ExpandedAttributes
+          attributes={attributes ?? null}
+          attributeError={attributeError}
+          onRetry={() => {
+            setAttributeError(null);
+            schemaStore.loadAttributes(entity.logicalName).then(() => {
+              if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
+                setAttributeError('Failed to load attributes.');
+              }
+            });
+          }}
+          onInsertText={onInsertText}
+          filter={attributeFilter}
+        />
       )}
     </div>
   );
@@ -152,11 +214,9 @@ function EntityRow({
 
 export function SchemaExplorer({ onInsertText, isDark = false, isConnected = false }: SchemaExplorerProps) {
   const store = useSchemaStore();
-  const [search, setSearch] = useState('');
+  const [entitySearch, setEntitySearch] = useState('');
+  const [attrSearch, setAttrSearch] = useState('');
 
-  // Load entities only once the connection is ready, and auto-retry
-  // when the connection arrives (covers the initial race where the
-  // tool renders before PPTB has established the connection).
   useEffect(() => {
     if (isConnected && store.entities.length === 0 && !store.loading) {
       store.loadEntities();
@@ -164,10 +224,10 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
   }, [isConnected, store]);
 
   const filtered = store.entities.filter((e) =>
-    search.trim() === ''
+    entitySearch.trim() === ''
       ? true
-      : e.logicalName.toLowerCase().includes(search.toLowerCase()) ||
-        e.displayName.toLowerCase().includes(search.toLowerCase())
+      : e.logicalName.toLowerCase().includes(entitySearch.toLowerCase()) ||
+        e.displayName.toLowerCase().includes(entitySearch.toLowerCase())
   );
 
   return (
@@ -187,14 +247,21 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
         )}
       </div>
 
-      {/* Search */}
-      <div className={`border-b px-3 py-2 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
+      {/* Search filters */}
+      <div className={`border-b px-3 py-2 space-y-1.5 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
         <input
           type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={entitySearch}
+          onChange={(e) => setEntitySearch(e.target.value)}
           placeholder="Filter entities…"
           className={`w-full rounded px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-700 text-neutral-200 placeholder:text-neutral-500' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
+        />
+        <input
+          type="text"
+          value={attrSearch}
+          onChange={(e) => setAttrSearch(e.target.value)}
+          placeholder="Filter attributes…"
+          className={`w-full rounded px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-600 text-neutral-200 placeholder:text-neutral-400' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
         />
       </div>
 
@@ -227,6 +294,7 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
               key={entity.logicalName}
               entity={entity}
               onInsertText={onInsertText}
+              globalAttrFilter={attrSearch}
             />
           ))
         )}
