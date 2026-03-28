@@ -59,6 +59,7 @@ export default function App() {
 
     const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
     const pendingDmlSqlRef = useRef<string>('');
+    const executingTabIdRef = useRef<string>('1'); // tracks which tab started the current execution
 
     // Per-tab result storage
     const [tabResults, setTabResults] = useState<Record<string, TabResults>>({ '1': { ...EMPTY_TAB_RESULTS } });
@@ -71,13 +72,14 @@ export default function App() {
     const { addEntry } = useHistoryStore();
     const { reset: resetSchema } = useSchemaStore();
 
-    // Sync query execution state into the active tab's results whenever it changes
+    // Sync query execution state into the TAB THAT STARTED the execution (not the currently active tab)
     useEffect(() => {
         if (queryExec.results !== null || queryExec.error !== null || queryExec.fetchXml !== null) {
+            const tabId = executingTabIdRef.current;
             setTabResults((prev) => ({
                 ...prev,
-                [activeQueryTabId]: {
-                    ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
+                [tabId]: {
+                    ...prev[tabId] ?? EMPTY_TAB_RESULTS,
                     results: queryExec.results,
                     columns: queryExec.columns,
                     fetchXml: queryExec.fetchXml,
@@ -87,21 +89,22 @@ export default function App() {
                 },
             }));
         }
-    }, [queryExec.results, queryExec.error, queryExec.fetchXml, queryExec.executionTime, queryExec.rowCount, queryExec.columns, activeQueryTabId]);
+    }, [queryExec.results, queryExec.error, queryExec.fetchXml, queryExec.executionTime, queryExec.rowCount, queryExec.columns]);
 
-    // Sync DML results into the active tab
+    // Sync DML results into the tab that started the execution
     useEffect(() => {
         if (dml.dmlResult !== null || dml.dmlError !== null) {
+            const tabId = executingTabIdRef.current;
             setTabResults((prev) => ({
                 ...prev,
-                [activeQueryTabId]: {
-                    ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
+                [tabId]: {
+                    ...prev[tabId] ?? EMPTY_TAB_RESULTS,
                     dmlResult: dml.dmlResult,
                     dmlError: dml.dmlError,
                 },
             }));
         }
-    }, [dml.dmlResult, dml.dmlError, activeQueryTabId]);
+    }, [dml.dmlResult, dml.dmlError]);
 
     // Listen for connection changes and reset schema
     const handleToolboxEvent = useCallback(
@@ -224,6 +227,7 @@ export default function App() {
             if (!trimmed) return;
 
             setActiveTab('results');
+            executingTabIdRef.current = activeQueryTabId;
 
             // Determine whether this is DML or SELECT by peeking at the first token
             let isDml = false;
