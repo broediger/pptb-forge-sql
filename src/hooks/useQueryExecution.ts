@@ -107,7 +107,7 @@ export function useQueryExecution(): QueryExecutionReturn {
 
                 const columns =
                     rows.length > 0
-                        ? Object.keys(rows[0]).filter((key) => !key.startsWith('@'))
+                        ? Object.keys(rows[0]).filter((key) => !key.includes('@'))
                         : [];
 
                 setState((prev) => ({
@@ -221,7 +221,7 @@ export function useQueryExecution(): QueryExecutionReturn {
 
             const columns =
                 allResults.length > 0
-                    ? Object.keys(allResults[0]).filter((key) => !key.startsWith('@'))
+                    ? Object.keys(allResults[0]).filter((key) => !key.includes('@'))
                     : snapshotColumns;
 
             setState((prev) => ({
