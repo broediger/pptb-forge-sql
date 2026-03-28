@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { tokenize, parse, generateFetchXml, SqlParseError } from '../sql';
+import { tokenize, parseStatement, generateFetchXml, SqlParseError } from '../sql';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -94,8 +94,11 @@ export function useQueryExecution(): QueryExecutionReturn {
 
             try {
                 const tokens = tokenize(sql);
-                const ast = parse(tokens);
-                const fetchXml = generateFetchXml(ast);
+                const stmt = parseStatement(tokens);
+                if (stmt.type !== 'select') {
+                    throw new Error('This is a DML statement. Use the DML execution path.');
+                }
+                const fetchXml = generateFetchXml(stmt);
 
                 const { rows, pagingCookie } = await runFetchXml(fetchXml);
 

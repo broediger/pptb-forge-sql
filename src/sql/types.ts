@@ -36,6 +36,14 @@ export enum TokenType {
     TRUE = 'TRUE',
     FALSE = 'FALSE',
 
+    // DML keywords
+    INSERT = 'INSERT',
+    INTO = 'INTO',
+    VALUES = 'VALUES',
+    UPDATE = 'UPDATE',
+    SET = 'SET',
+    DELETE = 'DELETE',
+
     // Literals & identifiers
     IDENTIFIER = 'IDENTIFIER',
     NUMBER = 'NUMBER',
@@ -174,6 +182,35 @@ export interface SelectStatement {
     having?: WhereExpr;
     orderBy?: OrderByItem[];
 }
+
+// ── DML statements ──
+
+export interface InsertStatement {
+    type: 'insert';
+    table: string;
+    columns: string[];
+    values: LiteralValue[][]; // multiple rows for multi-row insert
+}
+
+export interface SetClause {
+    column: string;
+    value: LiteralValue;
+}
+
+export interface UpdateStatement {
+    type: 'update';
+    table: string;
+    set: SetClause[];
+    where: WhereExpr; // required — parser rejects UPDATE without WHERE
+}
+
+export interface DeleteStatement {
+    type: 'delete';
+    table: string;
+    where: WhereExpr; // required — parser rejects DELETE without WHERE
+}
+
+export type Statement = SelectStatement | InsertStatement | UpdateStatement | DeleteStatement;
 
 // ── Parse error ──
 

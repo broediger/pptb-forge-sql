@@ -34,6 +34,12 @@ const KEYWORDS: Record<string, TokenType> = {
     MAX:      TokenType.MAX,
     TRUE:     TokenType.TRUE,
     FALSE:    TokenType.FALSE,
+    INSERT:   TokenType.INSERT,
+    INTO:     TokenType.INTO,
+    VALUES:   TokenType.VALUES,
+    UPDATE:   TokenType.UPDATE,
+    SET:      TokenType.SET,
+    DELETE:   TokenType.DELETE,
 };
 
 export function tokenize(sql: string): Token[] {

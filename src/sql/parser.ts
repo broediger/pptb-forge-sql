@@ -3,6 +3,11 @@ import {
     TokenType,
     SqlParseError,
     SelectStatement,
+    InsertStatement,
+    UpdateStatement,
+    DeleteStatement,
+    SetClause,
+    Statement,
     SelectExpr,
     ColumnRef,
     AggregateExpr,
@@ -29,7 +34,9 @@ const AGGREGATE_FUNCTIONS: TokenType[] = [
     TokenType.MAX,
 ];
 
-export function parse(tokens: Token[]): SelectStatement {
+// ── Shared token-walking infrastructure ──
+
+function makeWalker(tokens: Token[]) {
     let pos = 0;
 
     function peek(offset = 0): Token {
@@ -61,7 +68,6 @@ export function parse(tokens: Token[]): SelectStatement {
 
     function expectIdentifierOrKeyword(): Token {
         const t = peek();
-        // Allow keywords used as identifiers (table/column names like "order", "group", etc.)
         if (
             t.type === TokenType.IDENTIFIER ||
             t.type === TokenType.SELECT ||
@@ -96,7 +102,13 @@ export function parse(tokens: Token[]): SelectStatement {
             t.type === TokenType.MIN ||
             t.type === TokenType.MAX ||
             t.type === TokenType.TRUE ||
-            t.type === TokenType.FALSE
+            t.type === TokenType.FALSE ||
+            t.type === TokenType.INSERT ||
+            t.type === TokenType.INTO ||
+            t.type === TokenType.VALUES ||
+            t.type === TokenType.UPDATE ||
+            t.type === TokenType.SET ||
+            t.type === TokenType.DELETE
         ) {
             return advance();
         }
@@ -107,119 +119,13 @@ export function parse(tokens: Token[]): SelectStatement {
         );
     }
 
-    // Parse a possibly-dotted identifier: [table.]column
-    function parseColumnRef(): ColumnRef {
-        const first = expectIdentifierOrKeyword();
-        if (check(TokenType.DOT)) {
-            advance(); // consume dot
-            if (check(TokenType.STAR)) {
-                advance();
-                return { table: first.value, column: '*' };
-            }
-            const second = expectIdentifierOrKeyword();
-            return { table: first.value, column: second.value };
-        }
-        return { column: first.value };
-    }
-
-    function parseOptionalAlias(): string | undefined {
-        // AS alias or bare identifier alias (not followed by a keyword that starts a clause)
-        if (check(TokenType.AS)) {
-            advance();
-            return expectIdentifierOrKeyword().value;
-        }
-        // Implicit alias: next token is a plain identifier (keywords are their own token type)
-        if (peek().type === TokenType.IDENTIFIER) {
-            return advance().value;
-        }
-        return undefined;
-    }
-
-    // Parse SELECT columns
-    function parseSelectExpr(): SelectExpr {
-        // Aggregate function
-        if (AGGREGATE_FUNCTIONS.includes(peek().type)) {
-            const fnToken = advance();
-            const fnName = fnToken.type as 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX';
-            expect(TokenType.LPAREN);
-            let distinct = false;
-            if (check(TokenType.DISTINCT)) {
-                advance();
-                distinct = true;
-            }
-            let col: ColumnRef;
-            if (check(TokenType.STAR)) {
-                advance();
-                col = { column: '*' };
-            } else {
-                col = parseColumnRef();
-            }
-            expect(TokenType.RPAREN);
-            const alias = parseOptionalAlias();
-            const agg: AggregateExpr = { function: fnName, column: col, alias };
-            if (distinct) agg.distinct = true;
-            return agg;
-        }
-
-        // Bare * wildcard
-        if (check(TokenType.STAR)) {
-            advance();
-            return { column: '*' };
-        }
-
-        // Column ref (possibly table.column or table.*)
-        const col = parseColumnRef();
-        const alias = parseOptionalAlias();
-        if (alias) col.alias = alias;
-        return col;
-    }
-
-    function parseSelectList(): SelectExpr[] {
-        const exprs: SelectExpr[] = [parseSelectExpr()];
-        while (check(TokenType.COMMA)) {
-            advance();
-            exprs.push(parseSelectExpr());
-        }
-        return exprs;
-    }
-
-    function parseFrom(): FromClause {
-        const tableToken = expectIdentifierOrKeyword();
-        const table = tableToken.value;
-        // Optional alias: bare identifier or AS alias
-        let alias: string | undefined;
-        if (peek().type === TokenType.AS) {
-            advance();
-            alias = expectIdentifierOrKeyword().value;
-        } else if (peek().type === TokenType.IDENTIFIER) {
-            alias = advance().value;
-        }
-        return alias ? { table, alias } : { table };
-    }
-
     function parseLiteral(): LiteralValue {
         const t = peek();
-        if (t.type === TokenType.STRING) {
-            advance();
-            return t.value;
-        }
-        if (t.type === TokenType.NUMBER) {
-            advance();
-            return Number(t.value);
-        }
-        if (t.type === TokenType.TRUE) {
-            advance();
-            return true;
-        }
-        if (t.type === TokenType.FALSE) {
-            advance();
-            return false;
-        }
-        if (t.type === TokenType.NULL) {
-            advance();
-            return null;
-        }
-        // Negated number: handle - NUMBER
+        if (t.type === TokenType.STRING) { advance(); return t.value; }
+        if (t.type === TokenType.NUMBER) { advance(); return Number(t.value); }
+        if (t.type === TokenType.TRUE)   { advance(); return true; }
+        if (t.type === TokenType.FALSE)  { advance(); return false; }
+        if (t.type === TokenType.NULL)   { advance(); return null; }
         throw new SqlParseError(
             `Expected literal value but got '${t.value || t.type}'`,
             t.line,
@@ -227,7 +133,6 @@ export function parse(tokens: Token[]): SelectStatement {
         );
     }
 
-    // Parse a comparison operator token
     function parseComparisonOp(): ComparisonOp {
         const t = advance();
         switch (t.type) {
@@ -260,16 +165,28 @@ export function parse(tokens: Token[]): SelectStatement {
         );
     }
 
-    // Primary WHERE expression: handles atoms (comparisons, IS NULL, BETWEEN, IN, parens, NOT)
+    // Parse a possibly-dotted identifier: [table.]column
+    function parseColumnRef(): ColumnRef {
+        const first = expectIdentifierOrKeyword();
+        if (check(TokenType.DOT)) {
+            advance();
+            if (check(TokenType.STAR)) {
+                advance();
+                return { table: first.value, column: '*' };
+            }
+            const second = expectIdentifierOrKeyword();
+            return { table: first.value, column: second.value };
+        }
+        return { column: first.value };
+    }
+
     function parseWherePrimary(): WhereExpr {
-        // NOT expression
         if (check(TokenType.NOT)) {
             advance();
             const expr = parseWherePrimary();
             return { kind: 'not', expr } as NotExpr;
         }
 
-        // Parenthesized expression
         if (check(TokenType.LPAREN)) {
             advance();
             const expr = parseWhereOr();
@@ -277,7 +194,6 @@ export function parse(tokens: Token[]): SelectStatement {
             return expr;
         }
 
-        // Aggregate function used as left-hand side of a comparison (e.g. in HAVING)
         if (AGGREGATE_FUNCTIONS.includes(peek().type)) {
             const fnToken = advance();
             const fnName = fnToken.type as 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX';
@@ -319,25 +235,18 @@ export function parse(tokens: Token[]): SelectStatement {
             return { kind: 'comparison', left: aggExpr, operator: op, right } as ComparisonExpr;
         }
 
-        // Must be a column ref followed by operator
         const col = parseColumnRef();
 
-        // IS [NOT] NULL
         if (check(TokenType.IS)) {
             advance();
             let negated = false;
-            if (check(TokenType.NOT)) {
-                advance();
-                negated = true;
-            }
+            if (check(TokenType.NOT)) { advance(); negated = true; }
             expect(TokenType.NULL);
             return { kind: 'is_null', column: col, negated } as IsNullExpr;
         }
 
-        // [NOT] BETWEEN
         if (check(TokenType.NOT) && peek(1).type === TokenType.BETWEEN) {
-            advance(); // NOT
-            advance(); // BETWEEN
+            advance(); advance();
             const low = parseLiteral();
             expect(TokenType.AND);
             const high = parseLiteral();
@@ -352,16 +261,11 @@ export function parse(tokens: Token[]): SelectStatement {
             return { kind: 'between', column: col, low, high } as BetweenExpr;
         }
 
-        // [NOT] IN (...)
         if (check(TokenType.NOT) && peek(1).type === TokenType.IN) {
-            advance(); // NOT
-            advance(); // IN
+            advance(); advance();
             expect(TokenType.LPAREN);
             const values: LiteralValue[] = [parseLiteral()];
-            while (check(TokenType.COMMA)) {
-                advance();
-                values.push(parseLiteral());
-            }
+            while (check(TokenType.COMMA)) { advance(); values.push(parseLiteral()); }
             expect(TokenType.RPAREN);
             return { kind: 'in', column: col, values, negated: true } as InExpr;
         }
@@ -370,18 +274,13 @@ export function parse(tokens: Token[]): SelectStatement {
             advance();
             expect(TokenType.LPAREN);
             const values: LiteralValue[] = [parseLiteral()];
-            while (check(TokenType.COMMA)) {
-                advance();
-                values.push(parseLiteral());
-            }
+            while (check(TokenType.COMMA)) { advance(); values.push(parseLiteral()); }
             expect(TokenType.RPAREN);
             return { kind: 'in', column: col, values } as InExpr;
         }
 
-        // Comparison operator
         if (isComparisonOp()) {
             const op = parseComparisonOp();
-            // Right-hand side: literal or column ref
             const t = peek();
             let right: LiteralValue | ColumnRef;
             if (
@@ -406,7 +305,6 @@ export function parse(tokens: Token[]): SelectStatement {
         );
     }
 
-    // AND binds tighter than OR
     function parseWhereAnd(): WhereExpr {
         let left = parseWherePrimary();
         while (check(TokenType.AND)) {
@@ -427,6 +325,86 @@ export function parse(tokens: Token[]): SelectStatement {
         return left;
     }
 
+    return {
+        peek,
+        advance,
+        check,
+        expect,
+        expectIdentifierOrKeyword,
+        parseLiteral,
+        parseColumnRef,
+        parseWhereOr,
+    };
+}
+
+// ── SELECT parser ──
+
+function parseSelect(tokens: Token[]): SelectStatement {
+    const w = makeWalker(tokens);
+    const { peek, advance, check, expect, expectIdentifierOrKeyword, parseColumnRef, parseWhereOr } = w;
+
+    function parseOptionalAlias(): string | undefined {
+        if (check(TokenType.AS)) {
+            advance();
+            return expectIdentifierOrKeyword().value;
+        }
+        if (peek().type === TokenType.IDENTIFIER) {
+            return advance().value;
+        }
+        return undefined;
+    }
+
+    function parseSelectExpr(): SelectExpr {
+        if (AGGREGATE_FUNCTIONS.includes(peek().type)) {
+            const fnToken = advance();
+            const fnName = fnToken.type as 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX';
+            expect(TokenType.LPAREN);
+            let distinct = false;
+            if (check(TokenType.DISTINCT)) { advance(); distinct = true; }
+            let col: ColumnRef;
+            if (check(TokenType.STAR)) {
+                advance();
+                col = { column: '*' };
+            } else {
+                col = parseColumnRef();
+            }
+            expect(TokenType.RPAREN);
+            const alias = parseOptionalAlias();
+            const agg: AggregateExpr = { function: fnName, column: col, alias };
+            if (distinct) agg.distinct = true;
+            return agg;
+        }
+
+        if (check(TokenType.STAR)) {
+            advance();
+            return { column: '*' };
+        }
+
+        const col = parseColumnRef();
+        const alias = parseOptionalAlias();
+        if (alias) col.alias = alias;
+        return col;
+    }
+
+    function parseSelectList(): SelectExpr[] {
+        const exprs: SelectExpr[] = [parseSelectExpr()];
+        while (check(TokenType.COMMA)) { advance(); exprs.push(parseSelectExpr()); }
+        return exprs;
+    }
+
+    function parseFrom(): FromClause {
+        const tableToken = expectIdentifierOrKeyword();
+        const table = tableToken.value;
+        let alias: string | undefined;
+        if (peek().type === TokenType.AS) {
+            advance();
+            alias = expectIdentifierOrKeyword().value;
+        } else if (peek().type === TokenType.IDENTIFIER) {
+            alias = advance().value;
+        }
+        return alias ? { table, alias } : { table };
+    }
+
     function parseJoins(): JoinClause[] {
         const joins: JoinClause[] = [];
         while (true) {
@@ -437,7 +415,7 @@ export function parse(tokens: Token[]): SelectStatement {
                 joinType = 'INNER';
             } else if (check(TokenType.LEFT)) {
                 advance();
-                if (check(TokenType.OUTER)) advance(); // optional OUTER
+                if (check(TokenType.OUTER)) advance();
                 expect(TokenType.JOIN);
                 joinType = 'LEFT';
             } else if (check(TokenType.RIGHT)) {
@@ -447,7 +425,7 @@ export function parse(tokens: Token[]): SelectStatement {
                 joinType = 'RIGHT';
             } else if (check(TokenType.JOIN)) {
                 advance();
-                joinType = 'INNER'; // bare JOIN defaults to INNER
+                joinType = 'INNER';
             } else {
                 break;
             }
@@ -455,7 +433,6 @@ export function parse(tokens: Token[]): SelectStatement {
             const tableToken = expectIdentifierOrKeyword();
             const table = tableToken.value;
 
-            // Optional alias before ON
             let alias: string | undefined;
             if (check(TokenType.AS)) {
                 advance();
@@ -464,7 +441,6 @@ export function parse(tokens: Token[]): SelectStatement {
                 peek().type === TokenType.IDENTIFIER &&
                 peek().type !== TokenType.ON
             ) {
-                // bare alias only if it's an identifier (not ON keyword)
                 if (peek().type === TokenType.IDENTIFIER) {
                     alias = advance().value;
                 }
@@ -482,17 +458,14 @@ export function parse(tokens: Token[]): SelectStatement {
 
     function parseGroupBy(): ColumnRef[] {
         const cols: ColumnRef[] = [parseColumnRef()];
-        while (check(TokenType.COMMA)) {
-            advance();
-            cols.push(parseColumnRef());
-        }
+        while (check(TokenType.COMMA)) { advance(); cols.push(parseColumnRef()); }
         return cols;
     }
 
     function parseOrderBy(): OrderByItem[] {
         const items: OrderByItem[] = [];
         do {
-            if (items.length > 0) advance(); // consume comma
+            if (items.length > 0) advance();
             const col = parseColumnRef();
             let direction: 'ASC' | 'DESC' = 'ASC';
             if (check(TokenType.ASC)) { advance(); direction = 'ASC'; }
@@ -502,15 +475,12 @@ export function parse(tokens: Token[]): SelectStatement {
         return items;
     }
 
-    // ── Main parse ──
+    // ── Main SELECT parse ──
 
     expect(TokenType.SELECT);
 
     let distinct = false;
-    if (check(TokenType.DISTINCT)) {
-        advance();
-        distinct = true;
-    }
+    if (check(TokenType.DISTINCT)) { advance(); distinct = true; }
 
     let top: number | undefined;
     if (check(TokenType.TOP)) {
@@ -523,43 +493,23 @@ export function parse(tokens: Token[]): SelectStatement {
 
     expect(TokenType.FROM);
     const from = parseFrom();
-
     const joins = parseJoins();
 
     let where: WhereExpr | undefined;
-    if (check(TokenType.WHERE)) {
-        advance();
-        where = parseWhereOr();
-    }
+    if (check(TokenType.WHERE)) { advance(); where = parseWhereOr(); }
 
     let groupBy: ColumnRef[] | undefined;
-    if (check(TokenType.GROUP)) {
-        advance();
-        expect(TokenType.BY);
-        groupBy = parseGroupBy();
-    }
+    if (check(TokenType.GROUP)) { advance(); expect(TokenType.BY); groupBy = parseGroupBy(); }
 
     let having: WhereExpr | undefined;
-    if (check(TokenType.HAVING)) {
-        advance();
-        having = parseWhereOr();
-    }
+    if (check(TokenType.HAVING)) { advance(); having = parseWhereOr(); }
 
     let orderBy: OrderByItem[] | undefined;
-    if (check(TokenType.ORDER)) {
-        advance();
-        expect(TokenType.BY);
-        orderBy = parseOrderBy();
-    }
+    if (check(TokenType.ORDER)) { advance(); expect(TokenType.BY); orderBy = parseOrderBy(); }
 
     expect(TokenType.EOF);
 
-    const stmt: SelectStatement = {
-        type: 'select',
-        columns,
-        from,
-        joins,
-    };
+    const stmt: SelectStatement = { type: 'select', columns, from, joins };
     if (distinct) stmt.distinct = true;
     if (top !== undefined) stmt.top = top;
     if (where) stmt.where = where;
@@ -567,5 +517,172 @@ export function parse(tokens: Token[]): SelectStatement {
     if (having) stmt.having = having;
     if (orderBy) stmt.orderBy = orderBy;
 
+    return stmt;
+}
+
+// ── INSERT parser ──
+
+function parseInsert(tokens: Token[]): InsertStatement {
+    const { advance, check, expect, expectIdentifierOrKeyword, parseLiteral, peek } = makeWalker(tokens);
+
+    expect(TokenType.INSERT);
+    expect(TokenType.INTO);
+
+    const tableToken = expectIdentifierOrKeyword();
+    const table = tableToken.value;
+
+    // Column list
+    expect(TokenType.LPAREN);
+    const columns: string[] = [expectIdentifierOrKeyword().value];
+    while (check(TokenType.COMMA)) {
+        advance();
+        columns.push(expectIdentifierOrKeyword().value);
+    }
+    expect(TokenType.RPAREN);
+
+    expect(TokenType.VALUES);
+
+    // One or more value rows
+    const values: LiteralValue[][] = [];
+
+    function parseValueRow(): LiteralValue[] {
+        expect(TokenType.LPAREN);
+        const row: LiteralValue[] = [parseLiteral()];
+        while (check(TokenType.COMMA)) { advance(); row.push(parseLiteral()); }
+        expect(TokenType.RPAREN);
+        return row;
+    }
+
+    values.push(parseValueRow());
+    while (check(TokenType.COMMA)) {
+        advance();
+        values.push(parseValueRow());
+    }
+
+    // Validate column count matches values count in each row
+    for (let i = 0; i < values.length; i++) {
+        if (values[i].length !== columns.length) {
+            const t = peek();
+            throw new SqlParseError(
+                `Values row ${i + 1} has ${values[i].length} value(s) but ${columns.length} column(s) were specified`,
+                t.line,
+                t.column,
+            );
+        }
+    }
+
+    expect(TokenType.EOF);
+
+    return { type: 'insert', table, columns, values };
+}
+
+// ── UPDATE parser ──
+
+function parseUpdate(tokens: Token[]): UpdateStatement {
+    const { advance, check, expect, expectIdentifierOrKeyword, parseLiteral, parseWhereOr, peek } = makeWalker(tokens);
+
+    expect(TokenType.UPDATE);
+
+    const tableToken = expectIdentifierOrKeyword();
+    const table = tableToken.value;
+
+    expect(TokenType.SET);
+
+    // One or more col = val pairs
+    const set: SetClause[] = [];
+
+    function parseSetClause(): SetClause {
+        const column = expectIdentifierOrKeyword().value;
+        expect(TokenType.EQUALS);
+        const value = parseLiteral();
+        return { column, value };
+    }
+
+    set.push(parseSetClause());
+    while (check(TokenType.COMMA)) {
+        advance();
+        set.push(parseSetClause());
+    }
+
+    // WHERE is required
+    if (!check(TokenType.WHERE)) {
+        const t = peek();
+        throw new SqlParseError(
+            'UPDATE without WHERE clause is not allowed. Use WHERE to specify which records to update.',
+            t.line,
+            t.column,
+        );
+    }
+    advance(); // consume WHERE
+    const where = parseWhereOr();
+
+    expect(TokenType.EOF);
+
+    return { type: 'update', table, set, where };
+}
+
+// ── DELETE parser ──
+
+function parseDelete(tokens: Token[]): DeleteStatement {
+    const { advance, check, expect, expectIdentifierOrKeyword, parseWhereOr, peek } = makeWalker(tokens);
+
+    expect(TokenType.DELETE);
+    expect(TokenType.FROM);
+
+    const tableToken = expectIdentifierOrKeyword();
+    const table = tableToken.value;
+
+    // WHERE is required
+    if (!check(TokenType.WHERE)) {
+        const t = peek();
+        throw new SqlParseError(
+            'DELETE without WHERE clause is not allowed. Use WHERE to specify which records to delete.',
+            t.line,
+            t.column,
+        );
+    }
+    advance(); // consume WHERE
+    const where = parseWhereOr();
+
+    expect(TokenType.EOF);
+
+    return { type: 'delete', table, where };
+}
+
+// ── Public API ──
+
+export function parseStatement(tokens: Token[]): Statement {
+    const first = tokens[0];
+    if (!first) {
+        throw new SqlParseError('Expected SELECT, INSERT, UPDATE, or DELETE', 1, 1);
+    }
+    switch (first.type) {
+        case TokenType.SELECT:
+            return parseSelect(tokens);
+        case TokenType.INSERT:
+            return parseInsert(tokens);
+        case TokenType.UPDATE:
+            return parseUpdate(tokens);
+        case TokenType.DELETE:
+            return parseDelete(tokens);
+        default:
+            throw new SqlParseError(
+                `Expected SELECT, INSERT, UPDATE, or DELETE`,
+                first.line,
+                first.column,
+            );
+    }
+}
+
+export function parse(tokens: Token[]): SelectStatement {
+    const stmt = parseStatement(tokens);
+    if (stmt.type !== 'select') {
+        const first = tokens[0];
+        throw new SqlParseError(
+            `Expected SELECT statement but got ${stmt.type.toUpperCase()}`,
+            first?.line ?? 1,
+            first?.column ?? 1,
+        );
+    }
     return stmt;
 }

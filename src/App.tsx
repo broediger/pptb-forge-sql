@@ -6,12 +6,16 @@ import { StatusBar } from './components/StatusBar';
 import { FetchXmlInspector } from './components/FetchXmlInspector';
 import { QueryHistory } from './components/QueryHistory';
 import { SchemaExplorer } from './components/SchemaExplorer';
+import { DmlConfirmDialog } from './components/DmlConfirmDialog';
+import { DmlProgress } from './components/DmlProgress';
 import { useQueryExecution } from './hooks/useQueryExecution';
+import { useDmlExecution } from './hooks/useDmlExecution';
 import { useHistoryStore } from './stores/historyStore';
 import { useSchemaStore } from './stores/schemaStore';
 import { exportToCsv, exportToJson } from './utils/export';
 import { useConnection, useToolboxEvents } from './hooks/useToolboxAPI';
 import { useTheme } from './hooks/useTheme';
+import { tokenize, parseStatement } from './sql';
 
 type ActiveTab = 'results' | 'fetchxml' | 'history';
 
@@ -25,6 +29,7 @@ export default function App() {
     const { connection, isLoading: connectionLoading, refreshConnection } = useConnection();
     const { results, columns, fetchXml, error, isExecuting, executionTime, rowCount, pagingCookie, execute, loadNextPage } =
         useQueryExecution();
+    const dml = useDmlExecution();
     const { addEntry } = useHistoryStore();
     const { reset: resetSchema } = useSchemaStore();
 
@@ -51,6 +56,24 @@ export default function App() {
             if (!trimmed) return;
 
             setActiveTab('results');
+
+            // Determine whether this is DML or SELECT by peeking at the first token
+            let isDml = false;
+            try {
+                const tokens = tokenize(trimmed);
+                const stmt = parseStatement(tokens);
+                isDml = stmt.type === 'insert' || stmt.type === 'update' || stmt.type === 'delete';
+            } catch {
+                // If parsing fails entirely, fall through to execute() which will report the error
+            }
+
+            if (isDml) {
+                await dml.execute(trimmed);
+                // Record in history using dmlResult — will be set after execute resolves
+                // (history is added when dmlResult is available; see effect below)
+                return;
+            }
+
             const result = await execute(trimmed);
 
             addEntry({
@@ -61,7 +84,7 @@ export default function App() {
                 error: result.error ?? undefined,
             });
         },
-        [execute, addEntry]
+        [execute, addEntry, dml]
     );
 
     const handleSelectHistory = useCallback((sql: string) => {
@@ -252,7 +275,66 @@ export default function App() {
                     <div className={`flex-1 min-h-0 overflow-auto ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
                         {activeTab === 'results' && (
                             <>
-                                {isExecuting && !results ? (
+                                {/* DML progress indicator */}
+                                {dml.progress && (
+                                    <div className="p-4">
+                                        <DmlProgress
+                                            progress={dml.progress}
+                                            onCancel={dml.cancelExecution}
+                                            isDark={isDark}
+                                        />
+                                    </div>
+                                )}
+
+                                {/* DML executing spinner (before progress kicks in) */}
+                                {dml.isExecuting && !dml.progress && !dml.confirmationNeeded ? (
+                                    <div className={`flex h-full items-center justify-center gap-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                                        <svg className="animate-spin h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                        </svg>
+                                        Executing…
+                                    </div>
+                                ) : dml.dmlError ? (
+                                    /* DML error */
+                                    <div className="p-4">
+                                        <div className={`rounded-md border p-3 ${isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'}`}>
+                                            <p className={`text-sm font-medium mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>DML error</p>
+                                            <p className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}>{dml.dmlError}</p>
+                                        </div>
+                                    </div>
+                                ) : dml.dmlResult ? (
+                                    /* DML success card */
+                                    <div className="p-4">
+                                        <div className={`rounded-md border p-4 ${isDark ? 'bg-green-950/30 border-green-800/50' : 'bg-green-50 border-green-200'}`}>
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <svg className={`h-4 w-4 shrink-0 ${isDark ? 'text-green-400' : 'text-green-600'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                <p className={`text-sm font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}>
+                                                    {dml.dmlResult.operation} successful
+                                                </p>
+                                            </div>
+                                            <dl className={`text-xs space-y-1 ${isDark ? 'text-green-300' : 'text-green-700'}`}>
+                                                <div className="flex gap-2">
+                                                    <dt className="font-medium">Records affected:</dt>
+                                                    <dd>{dml.dmlResult.affectedCount}</dd>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <dt className="font-medium">Execution time:</dt>
+                                                    <dd>{dml.dmlResult.executionTime}ms</dd>
+                                                </div>
+                                                {dml.dmlResult.createdIds && dml.dmlResult.createdIds.length > 0 && (
+                                                    <div className="flex gap-2">
+                                                        <dt className="font-medium">Created ID{dml.dmlResult.createdIds.length > 1 ? 's' : ''}:</dt>
+                                                        <dd className="font-mono break-all">{dml.dmlResult.createdIds.join(', ')}</dd>
+                                                    </div>
+                                                )}
+                                            </dl>
+                                        </div>
+                                    </div>
+                                ) : isExecuting && !results ? (
+                                    /* SELECT executing spinner */
                                     <div className={`flex h-full items-center justify-center gap-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                                         <svg
                                             className="animate-spin h-4 w-4 text-gray-400"
@@ -324,6 +406,16 @@ export default function App() {
                     />
                 </div>
             </div>
+
+            {/* DML confirmation dialog — rendered as a portal-like overlay */}
+            {dml.confirmationNeeded && (
+                <DmlConfirmDialog
+                    confirmation={dml.confirmationNeeded}
+                    onConfirm={dml.confirmExecution}
+                    onCancel={dml.cancelExecution}
+                    isDark={isDark}
+                />
+            )}
         </div>
     );
 }
