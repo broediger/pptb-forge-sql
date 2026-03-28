@@ -119,6 +119,56 @@ export function tokenize(sql: string): Token[] {
             continue;
         }
 
+        // Square-bracket quoted identifier: [column name]
+        if (ch === '[') {
+            advance(); // consume '['
+            let value = '';
+            let terminated = false;
+            while (pos < sql.length) {
+                const c = peek();
+                if (c === ']') {
+                    advance(); // consume ']'
+                    terminated = true;
+                    break;
+                } else {
+                    value += advance();
+                }
+            }
+            if (!terminated) {
+                throw new SqlParseError('Unterminated bracket identifier', startLine, startCol);
+            }
+            tokens.push(makeToken(TokenType.IDENTIFIER, value, startLine, startCol));
+            continue;
+        }
+
+        // Double-quoted identifier: "column name" (with "" as escaped quote)
+        if (ch === '"') {
+            advance(); // consume opening '"'
+            let value = '';
+            let terminated = false;
+            while (pos < sql.length) {
+                const c = peek();
+                if (c === '"') {
+                    advance(); // consume '"'
+                    if (peek() === '"') {
+                        // escaped double-quote ""
+                        advance();
+                        value += '"';
+                    } else {
+                        terminated = true;
+                        break;
+                    }
+                } else {
+                    value += advance();
+                }
+            }
+            if (!terminated) {
+                throw new SqlParseError('Unterminated quoted identifier', startLine, startCol);
+            }
+            tokens.push(makeToken(TokenType.IDENTIFIER, value, startLine, startCol));
+            continue;
+        }
+
         // Single-quoted string
         if (ch === "'") {
             advance(); // consume opening quote

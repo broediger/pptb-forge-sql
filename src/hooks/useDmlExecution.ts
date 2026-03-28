@@ -8,6 +8,7 @@ import {
     SelectStatement,
     WhereExpr,
 } from '../sql/types';
+import { useSettingsStore } from '../stores/settingsStore';
 
 // ── Public types ──
 
@@ -196,15 +197,19 @@ export function useDmlExecution() {
             return;
         }
 
-        // Require confirmation for > 10 records
-        if (count > 10) {
+        // Require confirmation above a threshold derived from batchSize
+        const batchSize = useSettingsStore.getState().settings.batchSize;
+        const updateConfirmThreshold = Math.max(10, Math.floor(batchSize / 5));
+        const updateTypeConfirmThreshold = batchSize * 2;
+
+        if (count > updateConfirmThreshold) {
             pendingRef.current = { stmt, recordIds: ids };
             pendingSqlRef.current = sql;
             setConfirmationNeeded({
                 operation: 'UPDATE',
                 table: stmt.table,
                 affectedCount: count,
-                typeToConfirm: count > 100,
+                typeToConfirm: count > updateTypeConfirmThreshold,
                 sql,
             });
             setIsExecuting(false);
@@ -291,12 +296,13 @@ export function useDmlExecution() {
         pendingSqlRef.current = sql;
 
         // DELETE always requires confirmation
+        const deleteBatchSize = useSettingsStore.getState().settings.batchSize;
         setConfirmationNeeded({
             operation: 'DELETE',
             table: stmt.table,
             affectedCount: count,
             sampleRecords,
-            typeToConfirm: count > 50,
+            typeToConfirm: count > deleteBatchSize,
             sql,
         });
         setIsExecuting(false);

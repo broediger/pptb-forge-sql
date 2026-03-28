@@ -310,6 +310,64 @@ describe('tokenize', () => {
         });
     });
 
+    // ── Quoted identifiers ────────────────────────────────────────────────────
+
+    describe('quoted identifiers', () => {
+        it('[name] produces IDENTIFIER token with value "name"', () => {
+            const tokens = tokenize('[name]');
+            expect(tokens[0].type).toBe(TokenType.IDENTIFIER);
+            expect(tokens[0].value).toBe('name');
+        });
+
+        it('[order] produces IDENTIFIER (not ORDER keyword)', () => {
+            const tokens = tokenize('[order]');
+            expect(tokens[0].type).toBe(TokenType.IDENTIFIER);
+            expect(tokens[0].value).toBe('order');
+        });
+
+        it('[column with spaces] produces IDENTIFIER with value "column with spaces"', () => {
+            const tokens = tokenize('[column with spaces]');
+            expect(tokens[0].type).toBe(TokenType.IDENTIFIER);
+            expect(tokens[0].value).toBe('column with spaces');
+        });
+
+        it('unterminated [name throws SqlParseError', () => {
+            expect(() => tokenize('[name')).toThrow(SqlParseError);
+            expect(() => tokenize('[name')).toThrow(/Unterminated bracket identifier/);
+        });
+
+        it('"name" produces IDENTIFIER token with value "name"', () => {
+            const tokens = tokenize('"name"');
+            expect(tokens[0].type).toBe(TokenType.IDENTIFIER);
+            expect(tokens[0].value).toBe('name');
+        });
+
+        it('"col""umn" produces IDENTIFIER with value col"umn (escaped double-quote)', () => {
+            const tokens = tokenize('"col""umn"');
+            expect(tokens[0].type).toBe(TokenType.IDENTIFIER);
+            expect(tokens[0].value).toBe('col"umn');
+        });
+
+        it('unterminated "name throws SqlParseError', () => {
+            expect(() => tokenize('"name')).toThrow(SqlParseError);
+            expect(() => tokenize('"name')).toThrow(/Unterminated quoted identifier/);
+        });
+
+        it('SELECT [name] FROM [account] parses correctly', () => {
+            const tokens = tokenize('SELECT [name] FROM [account]');
+            const types = tokens.map(t => t.type);
+            expect(types).toEqual([
+                TokenType.SELECT,
+                TokenType.IDENTIFIER,
+                TokenType.FROM,
+                TokenType.IDENTIFIER,
+                TokenType.EOF,
+            ]);
+            expect(tokens[1].value).toBe('name');
+            expect(tokens[3].value).toBe('account');
+        });
+    });
+
     // ── Complex query ─────────────────────────────────────────────────────────
 
     describe('complex query tokenization', () => {
