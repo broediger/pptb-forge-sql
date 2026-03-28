@@ -69,8 +69,8 @@ export default function App() {
     const { connection, isLoading: connectionLoading, refreshConnection } = useConnection();
     const queryExec = useQueryExecution();
     const dml = useDmlExecution();
-    const { addEntry } = useHistoryStore();
-    const { reset: resetSchema } = useSchemaStore();
+    const addEntry = useHistoryStore(s => s.addEntry);
+    const resetSchema = useSchemaStore(s => s.reset);
 
     // Sync query execution state into the TAB THAT STARTED the execution (not the currently active tab)
     useEffect(() => {

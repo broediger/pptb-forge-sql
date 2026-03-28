@@ -11,7 +11,7 @@
         "node": ">=18.0.0"
     },
     "scripts": {
-        "build": "tsc && vite build && rm -f dist/assets/*.worker-*.js",
+        "build": "tsc && vite build",
         "dev": "vite",
         "watch": "vite build --watch",
         "preview": "vite preview",
@@ -23,6 +23,7 @@
         "@monaco-editor/react": "^4.7.0",
         "@tailwindcss/vite": "^4.2.2",
         "@tanstack/react-table": "^8.21.3",
+        "@tanstack/react-virtual": "^3.13.23",
         "monaco-editor": "^0.55.1",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",

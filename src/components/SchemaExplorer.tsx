@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSchemaStore, type EntityInfo } from '../stores/schemaStore';
 
 interface SchemaExplorerProps {
@@ -132,8 +132,8 @@ function EntityRow({
 }) {
   const [manualExpanded, setManualExpanded] = useState(false);
   const [attributeError, setAttributeError] = useState<string | null>(null);
-  const schemaStore = useSchemaStore();
-  const attributes = schemaStore.attributes.get(entity.logicalName);
+  const attributes = useSchemaStore(s => s.attributes.get(entity.logicalName));
+  const loadAttributes = useSchemaStore(s => s.loadAttributes);
   const attributeFilter = globalAttrFilter;
   // Auto-expand when global attribute filter is active
   const expanded = manualExpanded || (attributeFilter.length > 0 && !!attributes);
@@ -141,7 +141,7 @@ function EntityRow({
   const handleToggle = async () => {
     if (!expanded && !attributes) {
       setAttributeError(null);
-      await schemaStore.loadAttributes(entity.logicalName);
+      await loadAttributes(entity.logicalName);
       // If the load failed, attributes won't be in the store — show a per-entity error.
       if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
         setAttributeError('Failed to load attributes.');
@@ -198,7 +198,7 @@ function EntityRow({
           attributeError={attributeError}
           onRetry={() => {
             setAttributeError(null);
-            schemaStore.loadAttributes(entity.logicalName).then(() => {
+            loadAttributes(entity.logicalName).then(() => {
               if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
                 setAttributeError('Failed to load attributes.');
               }
@@ -213,22 +213,27 @@ function EntityRow({
 }
 
 export function SchemaExplorer({ onInsertText, isDark = false, isConnected = false }: SchemaExplorerProps) {
-  const store = useSchemaStore();
+  const entities = useSchemaStore(s => s.entities);
+  const loading = useSchemaStore(s => s.loading);
+  const error = useSchemaStore(s => s.error);
+  const loadEntities = useSchemaStore(s => s.loadEntities);
   const [entitySearch, setEntitySearch] = useState('');
   const [attrSearch, setAttrSearch] = useState('');
 
   useEffect(() => {
-    if (isConnected && store.entities.length === 0 && !store.loading) {
-      store.loadEntities();
+    if (isConnected && entities.length === 0 && !loading) {
+      loadEntities();
     }
-  }, [isConnected, store]);
+  }, [isConnected, entities.length, loading, loadEntities]);
 
-  const filtered = store.entities.filter((e) =>
-    entitySearch.trim() === ''
-      ? true
-      : e.logicalName.toLowerCase().includes(entitySearch.toLowerCase()) ||
-        e.displayName.toLowerCase().includes(entitySearch.toLowerCase())
-  );
+  const filtered = useMemo(() =>
+    entities.filter((e) =>
+      entitySearch.trim() === ''
+        ? true
+        : e.logicalName.toLowerCase().includes(entitySearch.toLowerCase()) ||
+          e.displayName.toLowerCase().includes(entitySearch.toLowerCase())
+    )
+  , [entities, entitySearch]);
 
   return (
     <div className={`flex h-full flex-col ${isDark ? 'bg-neutral-800' : 'bg-gray-50'}`}>
@@ -236,13 +241,13 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
       <div className={`flex items-center justify-between border-b px-3 py-2 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
         <span className={`text-xs font-semibold ${isDark ? 'text-neutral-200' : 'text-gray-700'}`}>
           Schema
-          {store.entities.length > 0 && (
+          {entities.length > 0 && (
             <span className="ml-1.5 text-neutral-500">
-              ({store.entities.length})
+              ({entities.length})
             </span>
           )}
         </span>
-        {store.loading && (
+        {loading && (
           <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
         )}
       </div>
@@ -281,24 +286,24 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto py-1">
-        {store.error ? (
+        {error ? (
           <div className="px-3 py-4">
-            <p className="mb-2 text-xs text-red-400">{store.error}</p>
+            <p className="mb-2 text-xs text-red-400">{error}</p>
             <button
-              onClick={() => store.loadEntities()}
+              onClick={() => loadEntities()}
               className={`rounded px-2.5 py-1 text-xs transition-colors ${isDark ? 'bg-neutral-700 text-neutral-200 hover:bg-neutral-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
             >
               Retry
             </button>
           </div>
-        ) : store.loading && store.entities.length === 0 ? (
+        ) : loading && entities.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-10">
             <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
             <p className="text-xs text-neutral-500">Loading entities…</p>
           </div>
         ) : filtered.length === 0 ? (
           <p className="mt-6 text-center text-xs text-neutral-500 select-none">
-            {store.entities.length === 0
+            {entities.length === 0
               ? 'No entities loaded'
               : 'No entities match your filter'}
           </p>

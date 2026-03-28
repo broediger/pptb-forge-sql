@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+const pendingAttributeLoads = new Map<string, Promise<void>>();
+
 export interface EntityInfo {
     logicalName: string;
     displayName: string;
@@ -60,45 +62,53 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         }
     },
 
-    loadAttributes: async (entityLogicalName: string) => {
-        const { attributes } = get();
-
-        if (attributes.has(entityLogicalName)) {
-            return;
+    loadAttributes: (entityLogicalName: string): Promise<void> => {
+        if (get().attributes.has(entityLogicalName)) {
+            return Promise.resolve();
         }
 
-        try {
-            const result = await window.dataverseAPI.getEntityRelatedMetadata(
-                entityLogicalName,
-                'Attributes',
-                ['LogicalName', 'DisplayName', 'AttributeType'],
-            );
+        const existing = pendingAttributeLoads.get(entityLogicalName);
+        if (existing) return existing;
 
-            const collection = result as { value: Record<string, unknown>[] };
+        const promise = (async () => {
+            try {
+                const result = await window.dataverseAPI.getEntityRelatedMetadata(
+                    entityLogicalName,
+                    'Attributes',
+                    ['LogicalName', 'DisplayName', 'AttributeType'],
+                );
 
-            const attrs: AttributeInfo[] = collection.value.map((raw) => {
-                const logicalName = (raw['LogicalName'] as string) ?? '';
-                const displayNameObj = raw['DisplayName'] as
-                    | { LocalizedLabels?: Array<{ Label: string }> }
-                    | undefined;
-                const displayName =
-                    displayNameObj?.LocalizedLabels?.[0]?.Label ?? logicalName;
-                const attributeType = (raw['AttributeType'] as string) ?? '';
+                const collection = result as { value: Record<string, unknown>[] };
 
-                return { logicalName, displayName, attributeType };
-            });
+                const attrs: AttributeInfo[] = collection.value.map((raw) => {
+                    const logicalName = (raw['LogicalName'] as string) ?? '';
+                    const displayNameObj = raw['DisplayName'] as
+                        | { LocalizedLabels?: Array<{ Label: string }> }
+                        | undefined;
+                    const displayName =
+                        displayNameObj?.LocalizedLabels?.[0]?.Label ?? logicalName;
+                    const attributeType = (raw['AttributeType'] as string) ?? '';
 
-            const updatedAttributes = new Map(get().attributes);
-            updatedAttributes.set(entityLogicalName, attrs);
+                    return { logicalName, displayName, attributeType };
+                });
 
-            set({ attributes: updatedAttributes });
-        } catch (err) {
-            const message =
-                err instanceof Error
-                    ? err.message
-                    : `Failed to load attributes for ${entityLogicalName}`;
-            set({ error: message });
-        }
+                const updatedAttributes = new Map(get().attributes);
+                updatedAttributes.set(entityLogicalName, attrs);
+
+                set({ attributes: updatedAttributes });
+            } catch (err) {
+                const message =
+                    err instanceof Error
+                        ? err.message
+                        : `Failed to load attributes for ${entityLogicalName}`;
+                set({ error: message });
+            } finally {
+                pendingAttributeLoads.delete(entityLogicalName);
+            }
+        })();
+
+        pendingAttributeLoads.set(entityLogicalName, promise);
+        return promise;
     },
 
     getEntityByName: (name: string) => {

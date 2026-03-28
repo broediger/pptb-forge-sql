@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useHistoryStore, type QueryHistoryEntry } from '../stores/historyStore';
 
 interface QueryHistoryProps {
@@ -156,22 +156,27 @@ function HistoryEntryRow({
 }
 
 export function QueryHistory({ onSelectQuery, isDark = false }: QueryHistoryProps) {
-  const store = useHistoryStore();
+  const entries = useHistoryStore(s => s.entries);
+  const loadFromSettings = useHistoryStore(s => s.loadFromSettings);
+  const togglePin = useHistoryStore(s => s.togglePin);
+  const removeEntry = useHistoryStore(s => s.removeEntry);
+  const clearHistory = useHistoryStore(s => s.clearHistory);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    store.loadFromSettings();
+    loadFromSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filtered = store.entries.filter((e) =>
-    search.trim() === '' ? true : e.sql.toLowerCase().includes(search.toLowerCase())
-  );
-
-  // Pinned entries at top
-  const pinned = filtered.filter((e) => e.pinned);
-  const unpinned = filtered.filter((e) => !e.pinned);
-  const sorted = [...pinned, ...unpinned];
+  const sorted = useMemo(() => {
+    const filtered = entries.filter((e) =>
+      search.trim() === '' ? true : e.sql.toLowerCase().includes(search.toLowerCase())
+    );
+    // Pinned entries at top
+    const pinned = filtered.filter((e) => e.pinned);
+    const unpinned = filtered.filter((e) => !e.pinned);
+    return [...pinned, ...unpinned];
+  }, [entries, search]);
 
   return (
     <div className={`flex h-full flex-col ${isDark ? 'bg-neutral-800' : 'bg-gray-50'}`}>
@@ -179,10 +184,10 @@ export function QueryHistory({ onSelectQuery, isDark = false }: QueryHistoryProp
       <div className={`flex items-center justify-between border-b px-3 py-2 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
         <span className={`text-xs font-semibold ${isDark ? 'text-neutral-200' : 'text-gray-700'}`}>
           History
-          <span className={`ml-1.5 ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>({store.entries.length})</span>
+          <span className={`ml-1.5 ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>({entries.length})</span>
         </span>
         <button
-          onClick={() => store.clearHistory()}
+          onClick={() => clearHistory()}
           className={`rounded px-2 py-0.5 text-xs transition-colors ${isDark ? 'text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-700'}`}
           title="Clear non-pinned history"
         >
@@ -205,7 +210,7 @@ export function QueryHistory({ onSelectQuery, isDark = false }: QueryHistoryProp
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
         {sorted.length === 0 ? (
           <p className={`mt-6 text-center text-xs select-none ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>
-            {store.entries.length === 0
+            {entries.length === 0
               ? 'No query history yet'
               : 'No results match your filter'}
           </p>
@@ -215,8 +220,8 @@ export function QueryHistory({ onSelectQuery, isDark = false }: QueryHistoryProp
               key={entry.id}
               entry={entry}
               onSelect={() => onSelectQuery(entry.sql)}
-              onPin={() => store.togglePin(entry.id)}
-              onRemove={() => store.removeEntry(entry.id)}
+              onPin={() => togglePin(entry.id)}
+              onRemove={() => removeEntry(entry.id)}
               isDark={isDark}
             />
           ))

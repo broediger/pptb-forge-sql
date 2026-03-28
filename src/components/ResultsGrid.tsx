@@ -9,6 +9,7 @@ import {
     type ColumnDef,
     type Header,
 } from '@tanstack/react-table';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ResultsGridProps {
     data: Record<string, unknown>[];
@@ -118,6 +119,18 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
         [connectionUrl],
     );
 
+    // Memoize which columns contain GUIDs based on the first row's values,
+    // so the regex is not re-run for every cell on every render.
+    const guidColumns = useMemo(() => {
+        const set = new Set<string>();
+        if (data.length === 0) return set;
+        const sample = data[0];
+        for (const col of columns) {
+            if (isGuid(sample[col])) set.add(col);
+        }
+        return set;
+    }, [data, columns]);
+
     const columnDefs = useMemo<ColumnDef<Record<string, unknown>>[]>(
         () =>
             columns.map((col) =>
@@ -155,6 +168,13 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
         getSortedRowModel: getSortedRowModel(),
         columnResizeMode: 'onChange',
         enableColumnResizing: true,
+    });
+
+    const rowVirtualizer = useVirtualizer({
+        count: table.getRowModel().rows.length,
+        getScrollElement: () => tableContainerRef.current,
+        estimateSize: () => 33, // approximate row height in px
+        overscan: 15,
     });
 
     if (data.length === 0 && !isLoading) {
@@ -213,59 +233,71 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                             </tr>
                         ))}
                     </thead>
-                    <tbody>
-                        {table.getRowModel().rows.map((row, rowIndex) => (
-                            <tr
-                                key={row.id}
-                                className={rowIndex % 2 === 0 ? '' : isDark ? 'bg-gray-800/50' : 'bg-gray-50/50'}
-                            >
-                                {row.getVisibleCells().map((cell) => {
-                                    const rawValue = cell.getValue();
-                                    const displayText = formatCellValue(rawValue);
-                                    const isNull = isNullish(rawValue);
-                                    const colId = cell.column.id;
-                                    const guidValue = isGuid(rawValue) ? rawValue : null;
-                                    const entityName = guidValue ? guessEntityFromColumn(colId) : null;
-                                    const canOpenRecord = guidValue && entityName && connectionUrl;
+                    <tbody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+                        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                            const row = table.getRowModel().rows[virtualRow.index];
+                            return (
+                                <tr
+                                    key={row.id}
+                                    data-index={virtualRow.index}
+                                    ref={(node) => rowVirtualizer.measureElement(node)}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        transform: `translateY(${virtualRow.start}px)`,
+                                    }}
+                                    className={virtualRow.index % 2 === 0 ? '' : isDark ? 'bg-gray-800/50' : 'bg-gray-50/50'}
+                                >
+                                    {row.getVisibleCells().map((cell) => {
+                                        const rawValue = cell.getValue();
+                                        const displayText = formatCellValue(rawValue);
+                                        const isNull = isNullish(rawValue);
+                                        const colId = cell.column.id;
+                                        const guidValue = guidColumns.has(colId) && isGuid(rawValue) ? rawValue : null;
+                                        const entityName = guidValue ? guessEntityFromColumn(colId) : null;
+                                        const canOpenRecord = guidValue && entityName && connectionUrl;
 
-                                    return (
-                                        <td
-                                            key={cell.id}
-                                            className={`px-3 py-1.5 truncate ${
-                                                isDark
-                                                    ? 'border-b border-r border-gray-700 text-gray-200'
-                                                    : 'border-b border-r border-gray-200 text-gray-800'
-                                            }`}
-                                            style={{ width: cell.column.getSize(), maxWidth: cell.column.getSize() }}
-                                            title={isNull ? 'null' : displayText}
-                                        >
-                                            {isNull ? (
-                                                <span className="text-gray-400 italic">null</span>
-                                            ) : canOpenRecord ? (
-                                                <span className="flex items-center gap-1">
-                                                    <span className="truncate font-mono text-xs">{displayText}</span>
-                                                    <button
-                                                        onClick={() => openRecord(entityName, guidValue)}
-                                                        className={`shrink-0 p-0.5 rounded transition-colors ${
-                                                            isDark
-                                                                ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-900/40'
-                                                                : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'
-                                                        }`}
-                                                        title={`Open ${entityName} record`}
-                                                    >
-                                                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-                                                        </svg>
-                                                    </button>
-                                                </span>
-                                            ) : (
-                                                displayText
-                                            )}
-                                        </td>
-                                    );
-                                })}
-                            </tr>
-                        ))}
+                                        return (
+                                            <td
+                                                key={cell.id}
+                                                className={`px-3 py-1.5 truncate ${
+                                                    isDark
+                                                        ? 'border-b border-r border-gray-700 text-gray-200'
+                                                        : 'border-b border-r border-gray-200 text-gray-800'
+                                                }`}
+                                                style={{ width: cell.column.getSize(), maxWidth: cell.column.getSize() }}
+                                                title={isNull ? 'null' : displayText}
+                                            >
+                                                {isNull ? (
+                                                    <span className="text-gray-400 italic">null</span>
+                                                ) : canOpenRecord ? (
+                                                    <span className="flex items-center gap-1">
+                                                        <span className="truncate font-mono text-xs">{displayText}</span>
+                                                        <button
+                                                            onClick={() => openRecord(entityName, guidValue)}
+                                                            className={`shrink-0 p-0.5 rounded transition-colors ${
+                                                                isDark
+                                                                    ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-900/40'
+                                                                    : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'
+                                                            }`}
+                                                            title={`Open ${entityName} record`}
+                                                        >
+                                                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                                                            </svg>
+                                                        </button>
+                                                    </span>
+                                                ) : (
+                                                    displayText
+                                                )}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>

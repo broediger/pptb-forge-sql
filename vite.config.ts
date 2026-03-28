@@ -59,6 +59,20 @@ export default defineConfig({
                 // Disable chunking since we're bundling everything
                 manualChunks: undefined,
             },
+            plugins: [
+                {
+                    // Prevent any Monaco worker modules from being bundled.
+                    // Workers can't run under PPTB's CSP (which blocks blob: URLs
+                    // and external worker scripts), so there is no point emitting them.
+                    name: 'strip-monaco-workers',
+                    resolveId(source) {
+                        if (source.includes('monaco-editor') && source.includes('worker')) {
+                            return { id: source, external: true };
+                        }
+                        return null;
+                    },
+                },
+            ],
         },
     },
 });
