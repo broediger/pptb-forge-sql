@@ -25,7 +25,9 @@ export function SqlEditor({
     // Keep a ref to the latest onExecute callback so the Ctrl+Enter keybinding
     // registered on mount always calls the current prop (Bug 4).
     const onExecuteRef = useRef(onExecute);
-    useEffect(() => { onExecuteRef.current = onExecute; }, [onExecute]);
+    useEffect(() => {
+        onExecuteRef.current = onExecute;
+    }, [onExecute]);
 
     const handleExecute = useCallback(() => {
         const value = internalEditorRef.current?.getValue() ?? '';
@@ -44,18 +46,17 @@ export function SqlEditor({
 
         // The command handler reads from the ref so it always calls the latest
         // onExecute even though this closure is created only once (Bug 4).
-        editor.addCommand(
-            monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
-            () => {
-                const value = editor.getValue();
-                onExecuteRef.current(value);
-            },
-        );
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+            const value = editor.getValue();
+            onExecuteRef.current(value);
+        });
     };
 
     return (
         <div className="flex flex-col w-full rounded overflow-hidden border border-gray-700">
-            <div className={`flex items-center gap-2 px-3 py-2 ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-200 text-gray-800'}`}>
+            <div
+                className={`flex items-center gap-2 px-3 py-2 ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-200 text-gray-800'}`}
+            >
                 <button
                     onClick={handleExecute}
                     className="flex items-center gap-1.5 bg-green-600 hover:bg-green-500 active:bg-green-700 text-white text-sm font-medium px-3 py-1.5 rounded transition-colors"
@@ -64,7 +65,9 @@ export function SqlEditor({
                     <span className="text-base leading-none">▶</span>
                     <span>Run</span>
                 </button>
-                <span className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>Ctrl+Enter to execute</span>
+                <span className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Ctrl+Enter to execute
+                </span>
             </div>
             <Editor
                 height="200px"

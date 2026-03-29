@@ -32,7 +32,9 @@ export function useToolboxEvents(onEvent: (event: string, data: any) => void) {
     // Keep a ref to the latest callback so the handler registered once on mount
     // always calls the current version without needing to re-register.
     const onEventRef = useRef(onEvent);
-    useEffect(() => { onEventRef.current = onEvent; }, [onEvent]);
+    useEffect(() => {
+        onEventRef.current = onEvent;
+    }, [onEvent]);
 
     useEffect(() => {
         // Register the listener exactly once. We intentionally use an empty
@@ -44,7 +46,6 @@ export function useToolboxEvents(onEvent: (event: string, data: any) => void) {
         };
 
         window.toolboxAPI.events.on(handler);
-         
     }, []);
 }
 

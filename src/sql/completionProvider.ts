@@ -88,9 +88,7 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
             };
 
             // Text before the cursor on the current line
-            const linePrefix = model
-                .getLineContent(position.lineNumber)
-                .substring(0, position.column - 1);
+            const linePrefix = model.getLineContent(position.lineNumber).substring(0, position.column - 1);
 
             // Full SQL text before the cursor for FROM clause detection
             const fullTextBeforeCursor = model.getValueInRange({
@@ -104,14 +102,13 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
 
             // ── Table/entity context: right after FROM or JOIN ────────────────
             if (isTableContext(linePrefix)) {
-                const suggestions: monaco.languages.CompletionItem[] =
-                    store.entities.map((entity) => ({
-                        label: entity.logicalName,
-                        kind: KIND_CLASS,
-                        insertText: entity.logicalName,
-                        detail: entity.displayName,
-                        range,
-                    }));
+                const suggestions: monaco.languages.CompletionItem[] = store.entities.map((entity) => ({
+                    label: entity.logicalName,
+                    kind: KIND_CLASS,
+                    insertText: entity.logicalName,
+                    detail: entity.displayName,
+                    range,
+                }));
                 return { suggestions };
             }
 
@@ -127,14 +124,13 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
 
                     const attrs = store.attributes.get(tableName);
                     if (attrs && attrs.length > 0) {
-                        const suggestions: monaco.languages.CompletionItem[] =
-                            attrs.map((attr) => ({
-                                label: attr.logicalName,
-                                kind: KIND_FIELD,
-                                insertText: attr.logicalName,
-                                detail: `${attr.displayName} (${attr.attributeType})`,
-                                range,
-                            }));
+                        const suggestions: monaco.languages.CompletionItem[] = attrs.map((attr) => ({
+                            label: attr.logicalName,
+                            kind: KIND_FIELD,
+                            insertText: attr.logicalName,
+                            detail: `${attr.displayName} (${attr.attributeType})`,
+                            range,
+                        }));
                         return { suggestions };
                     }
                 }
@@ -143,14 +139,13 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
             }
 
             // ── Default: SQL keywords ─────────────────────────────────────────
-            const suggestions: monaco.languages.CompletionItem[] =
-                SQL_KEYWORDS.map((keyword) => ({
-                    label: keyword,
-                    kind: KIND_KEYWORD,
-                    insertText: keyword,
-                    detail: 'SQL keyword',
-                    range,
-                }));
+            const suggestions: monaco.languages.CompletionItem[] = SQL_KEYWORDS.map((keyword) => ({
+                label: keyword,
+                kind: KIND_KEYWORD,
+                insertText: keyword,
+                detail: 'SQL keyword',
+                range,
+            }));
 
             return { suggestions };
         },

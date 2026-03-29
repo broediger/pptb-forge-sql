@@ -57,21 +57,19 @@ function isNullish(value: unknown): boolean {
 
 // ── Column resize handle ──
 
-function ResizeHandle<T>({
-    header,
-    isDark,
-}: {
-    header: Header<T, unknown>;
-    isDark: boolean;
-}) {
+function ResizeHandle<T>({ header, isDark }: { header: Header<T, unknown>; isDark: boolean }) {
     return (
         <div
             onMouseDown={header.getResizeHandler()}
             onTouchStart={header.getResizeHandler()}
             className={`absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none ${
                 header.column.getIsResizing()
-                    ? isDark ? 'bg-blue-500' : 'bg-blue-400'
-                    : isDark ? 'bg-gray-600 hover:bg-gray-500' : 'bg-gray-300 hover:bg-gray-400'
+                    ? isDark
+                        ? 'bg-blue-500'
+                        : 'bg-blue-400'
+                    : isDark
+                      ? 'bg-gray-600 hover:bg-gray-500'
+                      : 'bg-gray-300 hover:bg-gray-400'
             }`}
         />
     );
@@ -81,11 +79,7 @@ function ResizeHandle<T>({
 
 function Spinner() {
     return (
-        <svg
-            className="animate-spin h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-        >
+        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
@@ -154,7 +148,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                         const bStr = formatCellValue(b).toLowerCase();
                         return aStr < bStr ? -1 : aStr > bStr ? 1 : 0;
                     },
-                })
+                }),
             ),
         [columns],
     );
@@ -180,7 +174,9 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
 
     if (data.length === 0 && !isLoading) {
         return (
-            <div className={`flex items-center justify-center py-12 text-sm italic ${isDark ? 'text-gray-400' : 'text-gray-400'}`}>
+            <div
+                className={`flex items-center justify-center py-12 text-sm italic ${isDark ? 'text-gray-400' : 'text-gray-400'}`}
+            >
                 No results
             </div>
         );
@@ -190,19 +186,20 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
         <div className="flex flex-col h-full">
             {/* Loading overlay when re-executing with existing results */}
             {isLoading && data.length > 0 && (
-                <div className={`flex items-center gap-2 px-3 py-1.5 text-xs border-b ${
-                    isDark ? 'bg-blue-950/40 border-blue-800/40 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-600'
-                }`}>
+                <div
+                    className={`flex items-center gap-2 px-3 py-1.5 text-xs border-b ${
+                        isDark
+                            ? 'bg-blue-950/40 border-blue-800/40 text-blue-300'
+                            : 'bg-blue-50 border-blue-200 text-blue-600'
+                    }`}
+                >
                     <Spinner />
                     Executing query…
                 </div>
             )}
 
             <div ref={tableContainerRef} className="overflow-auto flex-1">
-                <table
-                    className="text-sm border-collapse"
-                    style={{ width: table.getCenterTotalSize() }}
-                >
+                <table className="text-sm border-collapse" style={{ width: table.getCenterTotalSize() }}>
                     <thead>
                         {table.getHeaderGroups().map((headerGroup) => (
                             <tr key={headerGroup.id}>
@@ -220,10 +217,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                             onClick={header.column.getToggleSortingHandler()}
                                         >
                                             <span className="flex items-center gap-1">
-                                                {flexRender(
-                                                    header.column.columnDef.header,
-                                                    header.getContext(),
-                                                )}
+                                                {flexRender(header.column.columnDef.header, header.getContext())}
                                                 {sorted === 'asc' && <span className="text-gray-400">▲</span>}
                                                 {sorted === 'desc' && <span className="text-gray-400">▼</span>}
                                             </span>
@@ -249,7 +243,9 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                         width: '100%',
                                         transform: `translateY(${virtualRow.start}px)`,
                                     }}
-                                    className={virtualRow.index % 2 === 0 ? '' : isDark ? 'bg-gray-800/50' : 'bg-gray-50/50'}
+                                    className={
+                                        virtualRow.index % 2 === 0 ? '' : isDark ? 'bg-gray-800/50' : 'bg-gray-50/50'
+                                    }
                                 >
                                     {row.getVisibleCells().map((cell) => {
                                         const rawValue = cell.getValue();
@@ -268,14 +264,19 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                                         ? 'border-b border-r border-gray-700 text-gray-200'
                                                         : 'border-b border-r border-gray-200 text-gray-800'
                                                 }`}
-                                                style={{ width: cell.column.getSize(), maxWidth: cell.column.getSize() }}
+                                                style={{
+                                                    width: cell.column.getSize(),
+                                                    maxWidth: cell.column.getSize(),
+                                                }}
                                                 title={isNull ? 'null' : displayText}
                                             >
                                                 {isNull ? (
                                                     <span className="text-gray-400 italic">null</span>
                                                 ) : canOpenRecord ? (
                                                     <span className="flex items-center gap-1">
-                                                        <span className="truncate font-mono text-xs">{displayText}</span>
+                                                        <span className="truncate font-mono text-xs">
+                                                            {displayText}
+                                                        </span>
                                                         <button
                                                             onClick={() => openRecord(entityName, guidValue)}
                                                             className={`shrink-0 p-0.5 rounded transition-colors ${
@@ -285,8 +286,18 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                                             }`}
                                                             title={`Open ${entityName} record`}
                                                         >
-                                                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                                                            <svg
+                                                                className="h-3.5 w-3.5"
+                                                                fill="none"
+                                                                viewBox="0 0 24 24"
+                                                                stroke="currentColor"
+                                                                strokeWidth={2}
+                                                            >
+                                                                <path
+                                                                    strokeLinecap="round"
+                                                                    strokeLinejoin="round"
+                                                                    d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                                                                />
                                                             </svg>
                                                         </button>
                                                     </span>
@@ -304,7 +315,9 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
             </div>
 
             {isLoading && data.length === 0 && (
-                <div className={`flex items-center justify-center gap-2 py-3 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                <div
+                    className={`flex items-center justify-center gap-2 py-3 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
+                >
                     <Spinner />
                     Loading...
                 </div>

@@ -52,11 +52,7 @@ function triggerDownload(blob: Blob, filename: string): void {
  * @param columns  Ordered list of column names used for the header and row extraction.
  * @param filename Optional filename for the downloaded file. Defaults to "query-results.csv".
  */
-export function exportToCsv(
-    data: Record<string, unknown>[],
-    columns: string[],
-    filename = 'query-results.csv'
-): void {
+export function exportToCsv(data: Record<string, unknown>[], columns: string[], filename = 'query-results.csv'): void {
     const rows: string[] = [];
 
     // Header row
@@ -79,10 +75,7 @@ export function exportToCsv(
  * @param data     Array of row objects to export.
  * @param filename Optional filename for the downloaded file. Defaults to "query-results.json".
  */
-export function exportToJson(
-    data: Record<string, unknown>[],
-    filename = 'query-results.json'
-): void {
+export function exportToJson(data: Record<string, unknown>[], filename = 'query-results.json'): void {
     const jsonContent = JSON.stringify(data, null, 2);
     const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
     triggerDownload(blob, filename);

@@ -18,16 +18,15 @@ const parseDML = (sql: string) => parseStatement(tokenize(sql));
 
 // Helper casts for WHERE expression kinds
 const asComparison = (e: unknown) => e as ComparisonExpr;
-const asLogical    = (e: unknown) => e as LogicalExpr;
-const asBetween    = (e: unknown) => e as BetweenExpr;
-const asIn         = (e: unknown) => e as InExpr;
-const asIsNull     = (e: unknown) => e as IsNullExpr;
-const asNot        = (e: unknown) => e as NotExpr;
+const asLogical = (e: unknown) => e as LogicalExpr;
+const asBetween = (e: unknown) => e as BetweenExpr;
+const asIn = (e: unknown) => e as InExpr;
+const asIsNull = (e: unknown) => e as IsNullExpr;
+const asNot = (e: unknown) => e as NotExpr;
 
 // ── INSERT ────────────────────────────────────────────────────────────────────
 
 describe('INSERT parsing', () => {
-
     describe('basic INSERT', () => {
         it('parses statement type as insert', () => {
             const ast = parseDML("INSERT INTO account (name, revenue) VALUES ('Contoso', 1000)") as InsertStatement;
@@ -54,21 +53,21 @@ describe('INSERT parsing', () => {
     describe('multi-row INSERT', () => {
         it('parses two rows', () => {
             const ast = parseDML(
-                "INSERT INTO contact (firstname, lastname) VALUES ('John', 'Doe'), ('Jane', 'Smith')"
+                "INSERT INTO contact (firstname, lastname) VALUES ('John', 'Doe'), ('Jane', 'Smith')",
             ) as InsertStatement;
             expect(ast.values).toHaveLength(2);
         });
 
         it('first row values are correct', () => {
             const ast = parseDML(
-                "INSERT INTO contact (firstname, lastname) VALUES ('John', 'Doe'), ('Jane', 'Smith')"
+                "INSERT INTO contact (firstname, lastname) VALUES ('John', 'Doe'), ('Jane', 'Smith')",
             ) as InsertStatement;
             expect(ast.values[0]).toEqual(['John', 'Doe']);
         });
 
         it('second row values are correct', () => {
             const ast = parseDML(
-                "INSERT INTO contact (firstname, lastname) VALUES ('John', 'Doe'), ('Jane', 'Smith')"
+                "INSERT INTO contact (firstname, lastname) VALUES ('John', 'Doe'), ('Jane', 'Smith')",
             ) as InsertStatement;
             expect(ast.values[1]).toEqual(['Jane', 'Smith']);
         });
@@ -125,27 +124,19 @@ describe('INSERT parsing', () => {
 
     describe('INSERT error cases', () => {
         it('throws SqlParseError on column/value count mismatch', () => {
-            expect(() =>
-                parseDML("INSERT INTO account (name) VALUES ('a', 'b')")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML("INSERT INTO account (name) VALUES ('a', 'b')")).toThrow(SqlParseError);
         });
 
         it('throws SqlParseError when VALUES keyword is missing', () => {
-            expect(() =>
-                parseDML("INSERT INTO account (name) ('Test')")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML("INSERT INTO account (name) ('Test')")).toThrow(SqlParseError);
         });
 
         it('throws SqlParseError when INTO keyword is missing', () => {
-            expect(() =>
-                parseDML("INSERT account (name) VALUES ('Test')")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML("INSERT account (name) VALUES ('Test')")).toThrow(SqlParseError);
         });
 
         it('throws SqlParseError on empty column list', () => {
-            expect(() =>
-                parseDML("INSERT INTO account () VALUES ()")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML('INSERT INTO account () VALUES ()')).toThrow(SqlParseError);
         });
     });
 
@@ -157,13 +148,11 @@ describe('INSERT parsing', () => {
             expect(ast.values[0][0]).toBe('Test');
         });
     });
-
 });
 
 // ── UPDATE ────────────────────────────────────────────────────────────────────
 
 describe('UPDATE parsing', () => {
-
     describe('basic UPDATE', () => {
         it('parses statement type as update', () => {
             const ast = parseDML("UPDATE account SET name = 'NewName' WHERE accountid = 'xxx'") as UpdateStatement;
@@ -199,14 +188,14 @@ describe('UPDATE parsing', () => {
     describe('multiple SET clauses', () => {
         it('parses two SET entries', () => {
             const ast = parseDML(
-                "UPDATE account SET name = 'New', revenue = 5000 WHERE status = 'active'"
+                "UPDATE account SET name = 'New', revenue = 5000 WHERE status = 'active'",
             ) as UpdateStatement;
             expect(ast.set).toHaveLength(2);
         });
 
         it('first SET entry is correct', () => {
             const ast = parseDML(
-                "UPDATE account SET name = 'New', revenue = 5000 WHERE status = 'active'"
+                "UPDATE account SET name = 'New', revenue = 5000 WHERE status = 'active'",
             ) as UpdateStatement;
             expect(ast.set[0].column).toBe('name');
             expect(ast.set[0].value).toBe('New');
@@ -214,7 +203,7 @@ describe('UPDATE parsing', () => {
 
         it('second SET entry is correct', () => {
             const ast = parseDML(
-                "UPDATE account SET name = 'New', revenue = 5000 WHERE status = 'active'"
+                "UPDATE account SET name = 'New', revenue = 5000 WHERE status = 'active'",
             ) as UpdateStatement;
             expect(ast.set[1].column).toBe('revenue');
             expect(ast.set[1].value).toBe(5000);
@@ -257,7 +246,7 @@ describe('UPDATE parsing', () => {
     describe('complex WHERE in UPDATE', () => {
         it('parses WHERE with AND and IS NOT NULL', () => {
             const ast = parseDML(
-                "UPDATE account SET status = 'closed' WHERE revenue < 100 AND createdon IS NOT NULL"
+                "UPDATE account SET status = 'closed' WHERE revenue < 100 AND createdon IS NOT NULL",
             ) as UpdateStatement;
             const logical = asLogical(ast.where);
             expect(logical.kind).toBe('and');
@@ -275,7 +264,7 @@ describe('UPDATE parsing', () => {
     describe('WHERE with IN in UPDATE', () => {
         it('parses WHERE column IN list', () => {
             const ast = parseDML(
-                "UPDATE account SET status = 'review' WHERE category IN ('A', 'B')"
+                "UPDATE account SET status = 'review' WHERE category IN ('A', 'B')",
             ) as UpdateStatement;
             const expr = asIn(ast.where);
             expect(expr.kind).toBe('in');
@@ -286,9 +275,7 @@ describe('UPDATE parsing', () => {
 
     describe('UPDATE error cases', () => {
         it('throws SqlParseError when WHERE is missing', () => {
-            expect(() =>
-                parseDML("UPDATE account SET name = 'x'")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML("UPDATE account SET name = 'x'")).toThrow(SqlParseError);
         });
 
         it('error message contains WHERE when WHERE is missing', () => {
@@ -302,9 +289,7 @@ describe('UPDATE parsing', () => {
         });
 
         it('throws SqlParseError when SET keyword is missing', () => {
-            expect(() =>
-                parseDML("UPDATE account name = 'x' WHERE id = '1'")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML("UPDATE account name = 'x' WHERE id = '1'")).toThrow(SqlParseError);
         });
     });
 
@@ -317,13 +302,11 @@ describe('UPDATE parsing', () => {
             expect(ast.set[0].value).toBe('x');
         });
     });
-
 });
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
 describe('DELETE parsing', () => {
-
     describe('basic DELETE', () => {
         it('parses statement type as delete', () => {
             const ast = parseDML("DELETE FROM account WHERE accountid = 'xxx'") as DeleteStatement;
@@ -347,9 +330,7 @@ describe('DELETE parsing', () => {
 
     describe('complex WHERE in DELETE', () => {
         it('parses WHERE with AND and IS NULL', () => {
-            const ast = parseDML(
-                "DELETE FROM contact WHERE status = 'inactive' AND email IS NULL"
-            ) as DeleteStatement;
+            const ast = parseDML("DELETE FROM contact WHERE status = 'inactive' AND email IS NULL") as DeleteStatement;
             const logical = asLogical(ast.where);
             expect(logical.kind).toBe('and');
             const left = asComparison(logical.left);
@@ -364,9 +345,7 @@ describe('DELETE parsing', () => {
 
     describe('WHERE with OR in DELETE', () => {
         it('parses OR condition', () => {
-            const ast = parseDML(
-                "DELETE FROM account WHERE status = 'closed' OR revenue = 0"
-            ) as DeleteStatement;
+            const ast = parseDML("DELETE FROM account WHERE status = 'closed' OR revenue = 0") as DeleteStatement;
             const logical = asLogical(ast.where);
             expect(logical.kind).toBe('or');
             expect(asComparison(logical.left).left.column).toBe('status');
@@ -376,9 +355,7 @@ describe('DELETE parsing', () => {
 
     describe('WHERE with IN in DELETE', () => {
         it('parses IN clause with multiple values', () => {
-            const ast = parseDML(
-                "DELETE FROM account WHERE status IN ('deleted', 'archived')"
-            ) as DeleteStatement;
+            const ast = parseDML("DELETE FROM account WHERE status IN ('deleted', 'archived')") as DeleteStatement;
             const expr = asIn(ast.where);
             expect(expr.kind).toBe('in');
             expect(expr.column.column).toBe('status');
@@ -388,9 +365,7 @@ describe('DELETE parsing', () => {
 
     describe('WHERE with LIKE in DELETE', () => {
         it('parses LIKE pattern comparison', () => {
-            const ast = parseDML(
-                "DELETE FROM account WHERE name LIKE '%test%'"
-            ) as DeleteStatement;
+            const ast = parseDML("DELETE FROM account WHERE name LIKE '%test%'") as DeleteStatement;
             const cmp = asComparison(ast.where);
             expect(cmp.kind).toBe('comparison');
             expect(cmp.operator).toBe('LIKE');
@@ -401,9 +376,7 @@ describe('DELETE parsing', () => {
 
     describe('WHERE with NOT in DELETE', () => {
         it('parses NOT expression', () => {
-            const ast = parseDML(
-                "DELETE FROM account WHERE NOT active = TRUE"
-            ) as DeleteStatement;
+            const ast = parseDML('DELETE FROM account WHERE NOT active = TRUE') as DeleteStatement;
             const not = asNot(ast.where);
             expect(not.kind).toBe('not');
             const inner = asComparison(not.expr);
@@ -415,7 +388,7 @@ describe('DELETE parsing', () => {
     describe('WHERE with BETWEEN in DELETE', () => {
         it('parses BETWEEN range', () => {
             const ast = parseDML(
-                "DELETE FROM account WHERE createdon BETWEEN '2020-01-01' AND '2020-12-31'"
+                "DELETE FROM account WHERE createdon BETWEEN '2020-01-01' AND '2020-12-31'",
             ) as DeleteStatement;
             const expr = asBetween(ast.where);
             expect(expr.kind).toBe('between');
@@ -427,15 +400,13 @@ describe('DELETE parsing', () => {
 
     describe('DELETE error cases', () => {
         it('throws SqlParseError when WHERE is missing', () => {
-            expect(() =>
-                parseDML("DELETE FROM account")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML('DELETE FROM account')).toThrow(SqlParseError);
         });
 
         it('error message contains WHERE when WHERE is missing', () => {
             expect.assertions(2);
             try {
-                parseDML("DELETE FROM account");
+                parseDML('DELETE FROM account');
             } catch (e) {
                 expect(e).toBeInstanceOf(SqlParseError);
                 expect((e as SqlParseError).message).toMatch(/WHERE/i);
@@ -443,9 +414,7 @@ describe('DELETE parsing', () => {
         });
 
         it('throws SqlParseError when FROM keyword is missing', () => {
-            expect(() =>
-                parseDML("DELETE account WHERE accountid = 'xxx'")
-            ).toThrow(SqlParseError);
+            expect(() => parseDML("DELETE account WHERE accountid = 'xxx'")).toThrow(SqlParseError);
         });
     });
 
@@ -456,7 +425,6 @@ describe('DELETE parsing', () => {
             expect(ast.table).toBe('account');
         });
     });
-
 });
 
 // ── Backwards compatibility ───────────────────────────────────────────────────
@@ -478,13 +446,13 @@ describe('parseStatement with SELECT', () => {
 describe('statement type routing', () => {
     it('throws SqlParseError for unknown leading keyword', () => {
         // DROP is not a keyword — it tokenizes as an IDENTIFIER, not a recognised statement start
-        expect(() => parseDML("DROP TABLE account")).toThrow(SqlParseError);
+        expect(() => parseDML('DROP TABLE account')).toThrow(SqlParseError);
     });
 
     it('error message mentions the expected statement types', () => {
         expect.assertions(2);
         try {
-            parseDML("DROP TABLE account");
+            parseDML('DROP TABLE account');
         } catch (e) {
             expect(e).toBeInstanceOf(SqlParseError);
             expect((e as SqlParseError).message).toMatch(/SELECT|INSERT|UPDATE|DELETE/);

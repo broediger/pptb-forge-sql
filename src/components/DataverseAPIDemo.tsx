@@ -12,13 +12,16 @@ export const DataverseAPIDemo: React.FC<DataverseAPIDemoProps> = ({ connection, 
     const [crudOutput, setCrudOutput] = useState('');
     const [metadataOutput, setMetadataOutput] = useState('');
 
-    const showNotification = useCallback(async (title: string, body: string, type: 'success' | 'info' | 'warning' | 'error') => {
-        try {
-            await window.toolboxAPI.utils.showNotification({ title, body, type, duration: 3000 });
-        } catch (error) {
-            console.error('Error showing notification:', error);
-        }
-    }, []);
+    const showNotification = useCallback(
+        async (title: string, body: string, type: 'success' | 'info' | 'warning' | 'error') => {
+            try {
+                await window.toolboxAPI.utils.showNotification({ title, body, type, duration: 3000 });
+            } catch (error) {
+                console.error('Error showing notification:', error);
+            }
+        },
+        [],
+    );
 
     const queryAccounts = useCallback(async () => {
         if (!connection) {

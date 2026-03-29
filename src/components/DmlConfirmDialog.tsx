@@ -35,26 +35,34 @@ export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = f
     const operationLabel = operation.charAt(0) + operation.slice(1).toLowerCase();
 
     // Determine sample columns to display (up to 5 fields, skip system fields)
-    const sampleColumns: string[] = sampleRecords && sampleRecords.length > 0
-        ? Object.keys(sampleRecords[0])
-            .filter((k) => !k.startsWith('@'))
-            .slice(0, 5)
-        : [];
+    const sampleColumns: string[] =
+        sampleRecords && sampleRecords.length > 0
+            ? Object.keys(sampleRecords[0])
+                  .filter((k) => !k.startsWith('@'))
+                  .slice(0, 5)
+            : [];
 
     return (
         <div className={`fixed inset-0 z-50 flex items-center justify-center ${overlayClass}`}>
             <div className={`rounded-lg shadow-xl w-full max-w-lg mx-4 p-5 ${dialogClass}`}>
                 {/* Header */}
                 <div className="flex items-center gap-3 mb-4">
-                    <div className={`flex items-center justify-center w-9 h-9 rounded-full shrink-0 ${isDelete ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                    <div
+                        className={`flex items-center justify-center w-9 h-9 rounded-full shrink-0 ${isDelete ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}`}
+                    >
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                            />
                         </svg>
                     </div>
                     <div>
                         <h2 className="text-sm font-semibold">Confirm {operationLabel}</h2>
                         <p className={`text-xs ${subtextClass}`}>
-                            This will {operation.toLowerCase()} {affectedCount} record{affectedCount !== 1 ? 's' : ''} in <span className="font-mono">{table}</span>
+                            This will {operation.toLowerCase()} {affectedCount} record{affectedCount !== 1 ? 's' : ''}{' '}
+                            in <span className="font-mono">{table}</span>
                         </p>
                     </div>
                 </div>
@@ -87,9 +95,11 @@ export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = f
                                                     key={col}
                                                     className={`px-2 py-1.5 border-t truncate max-w-[120px] font-mono ${tableCellClass}`}
                                                 >
-                                                    {row[col] === null || row[col] === undefined
-                                                        ? <span className={subtextClass}>null</span>
-                                                        : String(row[col])}
+                                                    {row[col] === null || row[col] === undefined ? (
+                                                        <span className={subtextClass}>null</span>
+                                                    ) : (
+                                                        String(row[col])
+                                                    )}
                                                 </td>
                                             ))}
                                         </tr>

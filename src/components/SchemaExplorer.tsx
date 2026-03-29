@@ -2,322 +2,334 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSchemaStore, type EntityInfo } from '../stores/schemaStore';
 
 interface SchemaExplorerProps {
-  onInsertText?: (text: string) => void;
-  isDark?: boolean;
-  isConnected?: boolean;
+    onInsertText?: (text: string) => void;
+    isDark?: boolean;
+    isConnected?: boolean;
 }
 
 const ATTRIBUTE_TYPE_COLORS: Record<string, string> = {
-  String: 'bg-blue-900/60 text-blue-300',
-  Memo: 'bg-blue-900/60 text-blue-300',
-  Integer: 'bg-purple-900/60 text-purple-300',
-  BigInt: 'bg-purple-900/60 text-purple-300',
-  Decimal: 'bg-purple-900/60 text-purple-300',
-  Double: 'bg-purple-900/60 text-purple-300',
-  Money: 'bg-green-900/60 text-green-300',
-  Boolean: 'bg-orange-900/60 text-orange-300',
-  DateTime: 'bg-yellow-900/60 text-yellow-300',
-  Lookup: 'bg-pink-900/60 text-pink-300',
-  Owner: 'bg-pink-900/60 text-pink-300',
-  Picklist: 'bg-teal-900/60 text-teal-300',
-  State: 'bg-teal-900/60 text-teal-300',
-  Status: 'bg-teal-900/60 text-teal-300',
-  UniqueIdentifier: 'bg-neutral-700 text-neutral-300',
+    String: 'bg-blue-900/60 text-blue-300',
+    Memo: 'bg-blue-900/60 text-blue-300',
+    Integer: 'bg-purple-900/60 text-purple-300',
+    BigInt: 'bg-purple-900/60 text-purple-300',
+    Decimal: 'bg-purple-900/60 text-purple-300',
+    Double: 'bg-purple-900/60 text-purple-300',
+    Money: 'bg-green-900/60 text-green-300',
+    Boolean: 'bg-orange-900/60 text-orange-300',
+    DateTime: 'bg-yellow-900/60 text-yellow-300',
+    Lookup: 'bg-pink-900/60 text-pink-300',
+    Owner: 'bg-pink-900/60 text-pink-300',
+    Picklist: 'bg-teal-900/60 text-teal-300',
+    State: 'bg-teal-900/60 text-teal-300',
+    Status: 'bg-teal-900/60 text-teal-300',
+    UniqueIdentifier: 'bg-neutral-700 text-neutral-300',
 };
 
 function attributeTypeColor(type: string): string {
-  return ATTRIBUTE_TYPE_COLORS[type] ?? 'bg-neutral-700 text-neutral-400';
+    return ATTRIBUTE_TYPE_COLORS[type] ?? 'bg-neutral-700 text-neutral-400';
 }
 
 import type { AttributeInfo } from '../stores/schemaStore';
 
 function ExpandedAttributes({
-  attributes,
-  attributeError,
-  onRetry,
-  onInsertText,
-  filter,
+    attributes,
+    attributeError,
+    onRetry,
+    onInsertText,
+    filter,
 }: {
-  attributes: AttributeInfo[] | null;
-  attributeError: string | null;
-  onRetry: () => void;
-  onInsertText?: (text: string) => void;
-  filter: string;
+    attributes: AttributeInfo[] | null;
+    attributeError: string | null;
+    onRetry: () => void;
+    onInsertText?: (text: string) => void;
+    filter: string;
 }) {
-  const [attrSearch, setAttrSearch] = useState('');
-  const searchTerm = (filter || attrSearch).toLowerCase();
+    const [attrSearch, setAttrSearch] = useState('');
+    const searchTerm = (filter || attrSearch).toLowerCase();
 
-  const filtered = attributes
-    ? (searchTerm
-        ? attributes.filter((a) =>
-            a.logicalName.toLowerCase().includes(searchTerm) ||
-            a.displayName.toLowerCase().includes(searchTerm) ||
-            a.attributeType.toLowerCase().includes(searchTerm)
-          )
-        : attributes)
-    : null;
+    const filtered = attributes
+        ? searchTerm
+            ? attributes.filter(
+                  (a) =>
+                      a.logicalName.toLowerCase().includes(searchTerm) ||
+                      a.displayName.toLowerCase().includes(searchTerm) ||
+                      a.attributeType.toLowerCase().includes(searchTerm),
+              )
+            : attributes
+        : null;
 
-  return (
-    <div className="ml-5 border-l border-neutral-700 pl-2">
-      {attributeError ? (
-        <div className="flex items-center gap-2 px-2 py-1.5">
-          <span className="text-xs text-red-400">{attributeError}</span>
-          <button
-            className="rounded px-2 py-0.5 text-xs bg-neutral-700 text-neutral-200 hover:bg-neutral-600 transition-colors"
-            onClick={(e) => { e.stopPropagation(); onRetry(); }}
-          >
-            Retry
-          </button>
+    return (
+        <div className="ml-5 border-l border-neutral-700 pl-2">
+            {attributeError ? (
+                <div className="flex items-center gap-2 px-2 py-1.5">
+                    <span className="text-xs text-red-400">{attributeError}</span>
+                    <button
+                        className="rounded px-2 py-0.5 text-xs bg-neutral-700 text-neutral-200 hover:bg-neutral-600 transition-colors"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onRetry();
+                        }}
+                    >
+                        Retry
+                    </button>
+                </div>
+            ) : !attributes ? (
+                <div className="flex items-center gap-1.5 px-2 py-1.5">
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
+                    <span className="text-xs text-neutral-500">Loading…</span>
+                </div>
+            ) : (
+                <>
+                    {/* Attribute filter — only show when entity has many attributes */}
+                    {attributes.length > 10 && !filter && (
+                        <div className="px-1 py-1">
+                            <input
+                                type="text"
+                                value={attrSearch}
+                                onChange={(e) => setAttrSearch(e.target.value)}
+                                placeholder="Filter attributes…"
+                                className="w-full rounded px-2 py-1 text-xs bg-neutral-700 text-neutral-200 placeholder:text-neutral-500 outline-none focus:ring-1 focus:ring-indigo-500"
+                                onClick={(e) => e.stopPropagation()}
+                            />
+                        </div>
+                    )}
+                    {filtered && filtered.length === 0 ? (
+                        <p className="px-2 py-1 text-xs text-neutral-500">
+                            {searchTerm ? 'No matching attributes' : 'No attributes'}
+                        </p>
+                    ) : (
+                        filtered?.map((attr) => (
+                            <button
+                                key={attr.logicalName}
+                                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-neutral-700/50 transition-colors"
+                                onClick={() => onInsertText?.(attr.logicalName)}
+                                title={
+                                    attr.displayName !== attr.logicalName
+                                        ? `${attr.displayName} — Insert "${attr.logicalName}"`
+                                        : `Insert "${attr.logicalName}"`
+                                }
+                            >
+                                <span className="truncate text-xs text-neutral-300">{attr.logicalName}</span>
+                                <span
+                                    className={[
+                                        'ml-auto shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none',
+                                        attributeTypeColor(attr.attributeType),
+                                    ].join(' ')}
+                                >
+                                    {attr.attributeType}
+                                </span>
+                            </button>
+                        ))
+                    )}
+                </>
+            )}
         </div>
-      ) : !attributes ? (
-        <div className="flex items-center gap-1.5 px-2 py-1.5">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
-          <span className="text-xs text-neutral-500">Loading…</span>
-        </div>
-      ) : (
-        <>
-          {/* Attribute filter — only show when entity has many attributes */}
-          {attributes.length > 10 && !filter && (
-            <div className="px-1 py-1">
-              <input
-                type="text"
-                value={attrSearch}
-                onChange={(e) => setAttrSearch(e.target.value)}
-                placeholder="Filter attributes…"
-                className="w-full rounded px-2 py-1 text-xs bg-neutral-700 text-neutral-200 placeholder:text-neutral-500 outline-none focus:ring-1 focus:ring-indigo-500"
-                onClick={(e) => e.stopPropagation()}
-              />
-            </div>
-          )}
-          {filtered && filtered.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-neutral-500">
-              {searchTerm ? 'No matching attributes' : 'No attributes'}
-            </p>
-          ) : (
-            filtered?.map((attr) => (
-              <button
-                key={attr.logicalName}
-                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-neutral-700/50 transition-colors"
-                onClick={() => onInsertText?.(attr.logicalName)}
-                title={attr.displayName !== attr.logicalName ? `${attr.displayName} — Insert "${attr.logicalName}"` : `Insert "${attr.logicalName}"`}
-              >
-                <span className="truncate text-xs text-neutral-300">
-                  {attr.logicalName}
-                </span>
-                <span
-                  className={[
-                    'ml-auto shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none',
-                    attributeTypeColor(attr.attributeType),
-                  ].join(' ')}
-                >
-                  {attr.attributeType}
-                </span>
-              </button>
-            ))
-          )}
-        </>
-      )}
-    </div>
-  );
+    );
 }
 
 function EntityRow({
-  entity,
-  onInsertText,
-  globalAttrFilter,
+    entity,
+    onInsertText,
+    globalAttrFilter,
 }: {
-  entity: EntityInfo;
-  onInsertText?: (text: string) => void;
-  globalAttrFilter: string;
+    entity: EntityInfo;
+    onInsertText?: (text: string) => void;
+    globalAttrFilter: string;
 }) {
-  const [manualExpanded, setManualExpanded] = useState(false);
-  const [attributeError, setAttributeError] = useState<string | null>(null);
-  const attributes = useSchemaStore(s => s.attributes.get(entity.logicalName));
-  const loadAttributes = useSchemaStore(s => s.loadAttributes);
-  const attributeFilter = globalAttrFilter;
-  // Auto-expand when global attribute filter is active
-  const expanded = manualExpanded || (attributeFilter.length > 0 && !!attributes);
+    const [manualExpanded, setManualExpanded] = useState(false);
+    const [attributeError, setAttributeError] = useState<string | null>(null);
+    const attributes = useSchemaStore((s) => s.attributes.get(entity.logicalName));
+    const loadAttributes = useSchemaStore((s) => s.loadAttributes);
+    const attributeFilter = globalAttrFilter;
+    // Auto-expand when global attribute filter is active
+    const expanded = manualExpanded || (attributeFilter.length > 0 && !!attributes);
 
-  const handleToggle = async () => {
-    if (!expanded && !attributes) {
-      setAttributeError(null);
-      await loadAttributes(entity.logicalName);
-      // If the load failed, attributes won't be in the store — show a per-entity error.
-      if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
-        setAttributeError('Failed to load attributes.');
-      }
-    }
-    setManualExpanded((v) => !v);
-  };
-
-  return (
-    <div>
-      {/* Entity row */}
-      <div
-        className="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 hover:bg-neutral-700/60 transition-colors group"
-        onClick={handleToggle}
-      >
-        {/* Expand chevron */}
-        <svg
-          className={[
-            'h-3 w-3 shrink-0 text-neutral-500 transition-transform',
-            expanded ? 'rotate-90' : '',
-          ].join(' ')}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2.5}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-
-        {/* Entity name */}
-        <button
-          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-          onClick={(e) => {
-            e.stopPropagation();
-            onInsertText?.(entity.logicalName);
-          }}
-          title={`Insert "${entity.logicalName}"`}
-        >
-          <span className="truncate text-xs font-semibold text-neutral-100">
-            {entity.logicalName}
-          </span>
-          {entity.displayName && entity.displayName !== entity.logicalName && (
-            <span className="truncate text-xs text-neutral-500">
-              {entity.displayName}
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* Attributes */}
-      {expanded && (
-        <ExpandedAttributes
-          attributes={attributes ?? null}
-          attributeError={attributeError}
-          onRetry={() => {
+    const handleToggle = async () => {
+        if (!expanded && !attributes) {
             setAttributeError(null);
-            loadAttributes(entity.logicalName).then(() => {
-              if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
+            await loadAttributes(entity.logicalName);
+            // If the load failed, attributes won't be in the store — show a per-entity error.
+            if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
                 setAttributeError('Failed to load attributes.');
-              }
-            });
-          }}
-          onInsertText={onInsertText}
-          filter={attributeFilter}
-        />
-      )}
-    </div>
-  );
+            }
+        }
+        setManualExpanded((v) => !v);
+    };
+
+    return (
+        <div>
+            {/* Entity row */}
+            <div
+                className="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 hover:bg-neutral-700/60 transition-colors group"
+                onClick={handleToggle}
+            >
+                {/* Expand chevron */}
+                <svg
+                    className={[
+                        'h-3 w-3 shrink-0 text-neutral-500 transition-transform',
+                        expanded ? 'rotate-90' : '',
+                    ].join(' ')}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+
+                {/* Entity name */}
+                <button
+                    className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onInsertText?.(entity.logicalName);
+                    }}
+                    title={`Insert "${entity.logicalName}"`}
+                >
+                    <span className="truncate text-xs font-semibold text-neutral-100">{entity.logicalName}</span>
+                    {entity.displayName && entity.displayName !== entity.logicalName && (
+                        <span className="truncate text-xs text-neutral-500">{entity.displayName}</span>
+                    )}
+                </button>
+            </div>
+
+            {/* Attributes */}
+            {expanded && (
+                <ExpandedAttributes
+                    attributes={attributes ?? null}
+                    attributeError={attributeError}
+                    onRetry={() => {
+                        setAttributeError(null);
+                        loadAttributes(entity.logicalName).then(() => {
+                            if (!useSchemaStore.getState().attributes.has(entity.logicalName)) {
+                                setAttributeError('Failed to load attributes.');
+                            }
+                        });
+                    }}
+                    onInsertText={onInsertText}
+                    filter={attributeFilter}
+                />
+            )}
+        </div>
+    );
 }
 
 export function SchemaExplorer({ onInsertText, isDark = false, isConnected = false }: SchemaExplorerProps) {
-  const entities = useSchemaStore(s => s.entities);
-  const loading = useSchemaStore(s => s.loading);
-  const error = useSchemaStore(s => s.error);
-  const loadEntities = useSchemaStore(s => s.loadEntities);
-  const [entitySearch, setEntitySearch] = useState('');
-  const [attrSearch, setAttrSearch] = useState('');
+    const entities = useSchemaStore((s) => s.entities);
+    const loading = useSchemaStore((s) => s.loading);
+    const error = useSchemaStore((s) => s.error);
+    const loadEntities = useSchemaStore((s) => s.loadEntities);
+    const [entitySearch, setEntitySearch] = useState('');
+    const [attrSearch, setAttrSearch] = useState('');
 
-  useEffect(() => {
-    if (isConnected && entities.length === 0 && !loading) {
-      loadEntities();
-    }
-  }, [isConnected, entities.length, loading, loadEntities]);
+    useEffect(() => {
+        if (isConnected && entities.length === 0 && !loading) {
+            loadEntities();
+        }
+    }, [isConnected, entities.length, loading, loadEntities]);
 
-  const filtered = useMemo(() =>
-    entities.filter((e) =>
-      entitySearch.trim() === ''
-        ? true
-        : e.logicalName.toLowerCase().includes(entitySearch.toLowerCase()) ||
-          e.displayName.toLowerCase().includes(entitySearch.toLowerCase())
-    )
-  , [entities, entitySearch]);
+    const filtered = useMemo(
+        () =>
+            entities.filter((e) =>
+                entitySearch.trim() === ''
+                    ? true
+                    : e.logicalName.toLowerCase().includes(entitySearch.toLowerCase()) ||
+                      e.displayName.toLowerCase().includes(entitySearch.toLowerCase()),
+            ),
+        [entities, entitySearch],
+    );
 
-  return (
-    <div className={`flex h-full flex-col ${isDark ? 'bg-neutral-800' : 'bg-gray-50'}`}>
-      {/* Header */}
-      <div className={`flex items-center justify-between border-b px-3 py-2 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
-        <span className={`text-xs font-semibold ${isDark ? 'text-neutral-200' : 'text-gray-700'}`}>
-          Schema
-          {entities.length > 0 && (
-            <span className="ml-1.5 text-neutral-500">
-              ({entities.length})
-            </span>
-          )}
-        </span>
-        {loading && (
-          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
-        )}
-      </div>
-
-      {/* Search filters */}
-      <div className={`border-b px-3 py-2 space-y-1.5 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
-        <div className="relative">
-          <input
-            type="text"
-            value={entitySearch}
-            onChange={(e) => setEntitySearch(e.target.value)}
-            placeholder="Filter entities…"
-            className={`w-full rounded px-2.5 py-1.5 pr-6 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-700 text-neutral-200 placeholder:text-neutral-500' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
-          />
-          {entitySearch && (
-            <button onClick={() => setEntitySearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5" title="Clear">
-              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
-            </button>
-          )}
-        </div>
-        <div className="relative">
-          <input
-            type="text"
-            value={attrSearch}
-            onChange={(e) => setAttrSearch(e.target.value)}
-            placeholder="Filter attributes…"
-            className={`w-full rounded px-2.5 py-1.5 pr-6 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-600 text-neutral-200 placeholder:text-neutral-400' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
-          />
-          {attrSearch && (
-            <button onClick={() => setAttrSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5" title="Clear">
-              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto py-1">
-        {error ? (
-          <div className="px-3 py-4">
-            <p className="mb-2 text-xs text-red-400">{error}</p>
-            <button
-              onClick={() => loadEntities()}
-              className={`rounded px-2.5 py-1 text-xs transition-colors ${isDark ? 'bg-neutral-700 text-neutral-200 hover:bg-neutral-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+    return (
+        <div className={`flex h-full flex-col ${isDark ? 'bg-neutral-800' : 'bg-gray-50'}`}>
+            {/* Header */}
+            <div
+                className={`flex items-center justify-between border-b px-3 py-2 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}
             >
-              Retry
-            </button>
-          </div>
-        ) : loading && entities.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-10">
-            <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
-            <p className="text-xs text-neutral-500">Loading entities…</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <p className="mt-6 text-center text-xs text-neutral-500 select-none">
-            {entities.length === 0
-              ? 'No entities loaded'
-              : 'No entities match your filter'}
-          </p>
-        ) : (
-          filtered.map((entity) => (
-            <EntityRow
-              key={entity.logicalName}
-              entity={entity}
-              onInsertText={onInsertText}
-              globalAttrFilter={attrSearch}
-            />
-          ))
-        )}
-      </div>
-    </div>
-  );
+                <span className={`text-xs font-semibold ${isDark ? 'text-neutral-200' : 'text-gray-700'}`}>
+                    Schema
+                    {entities.length > 0 && <span className="ml-1.5 text-neutral-500">({entities.length})</span>}
+                </span>
+                {loading && (
+                    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
+                )}
+            </div>
+
+            {/* Search filters */}
+            <div className={`border-b px-3 py-2 space-y-1.5 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
+                <div className="relative">
+                    <input
+                        type="text"
+                        value={entitySearch}
+                        onChange={(e) => setEntitySearch(e.target.value)}
+                        placeholder="Filter entities…"
+                        className={`w-full rounded px-2.5 py-1.5 pr-6 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-700 text-neutral-200 placeholder:text-neutral-500' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
+                    />
+                    {entitySearch && (
+                        <button
+                            onClick={() => setEntitySearch('')}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5"
+                            title="Clear"
+                        >
+                            <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                            </svg>
+                        </button>
+                    )}
+                </div>
+                <div className="relative">
+                    <input
+                        type="text"
+                        value={attrSearch}
+                        onChange={(e) => setAttrSearch(e.target.value)}
+                        placeholder="Filter attributes…"
+                        className={`w-full rounded px-2.5 py-1.5 pr-6 text-xs outline-none focus:ring-1 focus:ring-indigo-500 transition ${isDark ? 'bg-neutral-600 text-neutral-200 placeholder:text-neutral-400' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
+                    />
+                    {attrSearch && (
+                        <button
+                            onClick={() => setAttrSearch('')}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5"
+                            title="Clear"
+                        >
+                            <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                            </svg>
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto py-1">
+                {error ? (
+                    <div className="px-3 py-4">
+                        <p className="mb-2 text-xs text-red-400">{error}</p>
+                        <button
+                            onClick={() => loadEntities()}
+                            className={`rounded px-2.5 py-1 text-xs transition-colors ${isDark ? 'bg-neutral-700 text-neutral-200 hover:bg-neutral-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                        >
+                            Retry
+                        </button>
+                    </div>
+                ) : loading && entities.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-10">
+                        <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
+                        <p className="text-xs text-neutral-500">Loading entities…</p>
+                    </div>
+                ) : filtered.length === 0 ? (
+                    <p className="mt-6 text-center text-xs text-neutral-500 select-none">
+                        {entities.length === 0 ? 'No entities loaded' : 'No entities match your filter'}
+                    </p>
+                ) : (
+                    filtered.map((entity) => (
+                        <EntityRow
+                            key={entity.logicalName}
+                            entity={entity}
+                            onInsertText={onInsertText}
+                            globalAttrFilter={attrSearch}
+                        />
+                    ))
+                )}
+            </div>
+        </div>
+    );
 }

@@ -1,45 +1,45 @@
 import { Token, TokenType, SqlParseError } from './types';
 
 const KEYWORDS: Record<string, TokenType> = {
-    SELECT:   TokenType.SELECT,
-    FROM:     TokenType.FROM,
-    WHERE:    TokenType.WHERE,
-    AND:      TokenType.AND,
-    OR:       TokenType.OR,
-    NOT:      TokenType.NOT,
-    IN:       TokenType.IN,
-    LIKE:     TokenType.LIKE,
-    BETWEEN:  TokenType.BETWEEN,
-    IS:       TokenType.IS,
-    NULL:     TokenType.NULL,
-    JOIN:     TokenType.JOIN,
-    INNER:    TokenType.INNER,
-    LEFT:     TokenType.LEFT,
-    RIGHT:    TokenType.RIGHT,
-    OUTER:    TokenType.OUTER,
-    ON:       TokenType.ON,
-    ORDER:    TokenType.ORDER,
-    BY:       TokenType.BY,
-    ASC:      TokenType.ASC,
-    DESC:     TokenType.DESC,
-    GROUP:    TokenType.GROUP,
-    HAVING:   TokenType.HAVING,
-    TOP:      TokenType.TOP,
+    SELECT: TokenType.SELECT,
+    FROM: TokenType.FROM,
+    WHERE: TokenType.WHERE,
+    AND: TokenType.AND,
+    OR: TokenType.OR,
+    NOT: TokenType.NOT,
+    IN: TokenType.IN,
+    LIKE: TokenType.LIKE,
+    BETWEEN: TokenType.BETWEEN,
+    IS: TokenType.IS,
+    NULL: TokenType.NULL,
+    JOIN: TokenType.JOIN,
+    INNER: TokenType.INNER,
+    LEFT: TokenType.LEFT,
+    RIGHT: TokenType.RIGHT,
+    OUTER: TokenType.OUTER,
+    ON: TokenType.ON,
+    ORDER: TokenType.ORDER,
+    BY: TokenType.BY,
+    ASC: TokenType.ASC,
+    DESC: TokenType.DESC,
+    GROUP: TokenType.GROUP,
+    HAVING: TokenType.HAVING,
+    TOP: TokenType.TOP,
     DISTINCT: TokenType.DISTINCT,
-    AS:       TokenType.AS,
-    COUNT:    TokenType.COUNT,
-    SUM:      TokenType.SUM,
-    AVG:      TokenType.AVG,
-    MIN:      TokenType.MIN,
-    MAX:      TokenType.MAX,
-    TRUE:     TokenType.TRUE,
-    FALSE:    TokenType.FALSE,
-    INSERT:   TokenType.INSERT,
-    INTO:     TokenType.INTO,
-    VALUES:   TokenType.VALUES,
-    UPDATE:   TokenType.UPDATE,
-    SET:      TokenType.SET,
-    DELETE:   TokenType.DELETE,
+    AS: TokenType.AS,
+    COUNT: TokenType.COUNT,
+    SUM: TokenType.SUM,
+    AVG: TokenType.AVG,
+    MIN: TokenType.MIN,
+    MAX: TokenType.MAX,
+    TRUE: TokenType.TRUE,
+    FALSE: TokenType.FALSE,
+    INSERT: TokenType.INSERT,
+    INTO: TokenType.INTO,
+    VALUES: TokenType.VALUES,
+    UPDATE: TokenType.UPDATE,
+    SET: TokenType.SET,
+    DELETE: TokenType.DELETE,
 };
 
 export function tokenize(sql: string): Token[] {
@@ -103,11 +103,13 @@ export function tokenize(sql: string): Token[] {
 
         // Multi-line comment /* */
         if (ch === '/' && peek(1) === '*') {
-            advance(); advance(); // consume /*
+            advance();
+            advance(); // consume /*
             let terminated = false;
             while (pos < sql.length) {
                 if (peek() === '*' && peek(1) === '/') {
-                    advance(); advance(); // consume */
+                    advance();
+                    advance(); // consume */
                     terminated = true;
                     break;
                 }
@@ -233,7 +235,8 @@ export function tokenize(sql: string): Token[] {
         }
 
         if (ch === '!' && peek(1) === '=') {
-            advance(); advance();
+            advance();
+            advance();
             tokens.push(makeToken(TokenType.NOT_EQUALS, '!=', startLine, startCol));
             continue;
         }
@@ -264,11 +267,31 @@ export function tokenize(sql: string): Token[] {
         }
 
         // Punctuation
-        if (ch === ',') { advance(); tokens.push(makeToken(TokenType.COMMA, ',', startLine, startCol)); continue; }
-        if (ch === '.') { advance(); tokens.push(makeToken(TokenType.DOT, '.', startLine, startCol)); continue; }
-        if (ch === '*') { advance(); tokens.push(makeToken(TokenType.STAR, '*', startLine, startCol)); continue; }
-        if (ch === '(') { advance(); tokens.push(makeToken(TokenType.LPAREN, '(', startLine, startCol)); continue; }
-        if (ch === ')') { advance(); tokens.push(makeToken(TokenType.RPAREN, ')', startLine, startCol)); continue; }
+        if (ch === ',') {
+            advance();
+            tokens.push(makeToken(TokenType.COMMA, ',', startLine, startCol));
+            continue;
+        }
+        if (ch === '.') {
+            advance();
+            tokens.push(makeToken(TokenType.DOT, '.', startLine, startCol));
+            continue;
+        }
+        if (ch === '*') {
+            advance();
+            tokens.push(makeToken(TokenType.STAR, '*', startLine, startCol));
+            continue;
+        }
+        if (ch === '(') {
+            advance();
+            tokens.push(makeToken(TokenType.LPAREN, '(', startLine, startCol));
+            continue;
+        }
+        if (ch === ')') {
+            advance();
+            tokens.push(makeToken(TokenType.RPAREN, ')', startLine, startCol));
+            continue;
+        }
 
         throw new SqlParseError(`Unexpected character '${ch}'`, startLine, startCol);
     }

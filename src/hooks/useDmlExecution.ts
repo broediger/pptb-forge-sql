@@ -124,7 +124,7 @@ export function useDmlExecution() {
 
         for (let i = 0; i < values.length; i++) {
             if (cancelledRef.current) {
-                setProgress((p) => p ? { ...p, cancelled: true } : p);
+                setProgress((p) => (p ? { ...p, cancelled: true } : p));
                 break;
             }
 
@@ -235,7 +235,7 @@ export function useDmlExecution() {
 
         for (let i = 0; i < ids.length; i++) {
             if (cancelledRef.current) {
-                setProgress((p) => p ? { ...p, cancelled: true } : p);
+                setProgress((p) => (p ? { ...p, cancelled: true } : p));
                 break;
             }
             await window.dataverseAPI.update(table, ids[i], setValues);
@@ -318,7 +318,7 @@ export function useDmlExecution() {
 
         for (let i = 0; i < ids.length; i++) {
             if (cancelledRef.current) {
-                setProgress((p) => p ? { ...p, cancelled: true } : p);
+                setProgress((p) => (p ? { ...p, cancelled: true } : p));
                 break;
             }
             await window.dataverseAPI.delete(table, ids[i]);
@@ -412,7 +412,7 @@ export function useDmlExecution() {
                 // toolboxAPI may not be available
             }
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ── Public: confirmExecution() ──
@@ -460,7 +460,7 @@ export function useDmlExecution() {
                 // toolboxAPI may not be available
             }
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ── Public: cancelExecution() ──

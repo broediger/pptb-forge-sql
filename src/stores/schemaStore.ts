@@ -42,11 +42,8 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
 
             const entities: EntityInfo[] = result.value.map((raw) => {
                 const logicalName = (raw['LogicalName'] as string) ?? '';
-                const displayNameObj = raw['DisplayName'] as
-                    | { LocalizedLabels?: Array<{ Label: string }> }
-                    | undefined;
-                const displayName =
-                    displayNameObj?.LocalizedLabels?.[0]?.Label ?? logicalName;
+                const displayNameObj = raw['DisplayName'] as { LocalizedLabels?: Array<{ Label: string }> } | undefined;
+                const displayName = displayNameObj?.LocalizedLabels?.[0]?.Label ?? logicalName;
                 const entitySetName = (raw['EntitySetName'] as string) ?? '';
 
                 return { logicalName, displayName, entitySetName };
@@ -56,8 +53,7 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
 
             set({ entities, loading: false });
         } catch (err) {
-            const message =
-                err instanceof Error ? err.message : 'Failed to load entities';
+            const message = err instanceof Error ? err.message : 'Failed to load entities';
             set({ loading: false, error: message });
         }
     },
@@ -72,11 +68,11 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
 
         const promise = (async () => {
             try {
-                const result = await window.dataverseAPI.getEntityRelatedMetadata(
-                    entityLogicalName,
-                    'Attributes',
-                    ['LogicalName', 'DisplayName', 'AttributeType'],
-                );
+                const result = await window.dataverseAPI.getEntityRelatedMetadata(entityLogicalName, 'Attributes', [
+                    'LogicalName',
+                    'DisplayName',
+                    'AttributeType',
+                ]);
 
                 const collection = result as { value: Record<string, unknown>[] };
 
@@ -85,8 +81,7 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
                     const displayNameObj = raw['DisplayName'] as
                         | { LocalizedLabels?: Array<{ Label: string }> }
                         | undefined;
-                    const displayName =
-                        displayNameObj?.LocalizedLabels?.[0]?.Label ?? logicalName;
+                    const displayName = displayNameObj?.LocalizedLabels?.[0]?.Label ?? logicalName;
                     const attributeType = (raw['AttributeType'] as string) ?? '';
 
                     return { logicalName, displayName, attributeType };
@@ -98,9 +93,7 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
                 set({ attributes: updatedAttributes });
             } catch (err) {
                 const message =
-                    err instanceof Error
-                        ? err.message
-                        : `Failed to load attributes for ${entityLogicalName}`;
+                    err instanceof Error ? err.message : `Failed to load attributes for ${entityLogicalName}`;
                 set({ error: message });
             } finally {
                 pendingAttributeLoads.delete(entityLogicalName);

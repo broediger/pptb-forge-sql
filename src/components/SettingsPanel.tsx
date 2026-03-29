@@ -51,9 +51,7 @@ export function SettingsPanel({ isOpen, onClose, isDark = false }: SettingsPanel
                 <div className="space-y-5">
                     {/* Batch Size */}
                     <div>
-                        <label className={`block text-xs font-medium mb-1.5 ${labelClass}`}>
-                            Batch Size
-                        </label>
+                        <label className={`block text-xs font-medium mb-1.5 ${labelClass}`}>Batch Size</label>
                         <div className="flex items-center gap-2">
                             <span className={`text-xs ${subtextClass} shrink-0`}>
                                 Insert/Update/Delete records in batches of

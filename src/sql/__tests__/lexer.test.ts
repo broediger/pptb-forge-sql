@@ -3,13 +3,12 @@ import { tokenize } from '../lexer';
 import { TokenType, SqlParseError } from '../types';
 
 describe('tokenize', () => {
-
     // ── Basic SELECT ──────────────────────────────────────────────────────────
 
     describe('basic SELECT tokenization', () => {
         it('produces correct token types for SELECT name FROM account', () => {
             const tokens = tokenize('SELECT name FROM account');
-            const types = tokens.map(t => t.type);
+            const types = tokens.map((t) => t.type);
             expect(types).toEqual([
                 TokenType.SELECT,
                 TokenType.IDENTIFIER,
@@ -61,7 +60,7 @@ describe('tokenize', () => {
 
         it('produces NUMBER token with value "-1" in WHERE age > -1', () => {
             const tokens = tokenize('SELECT age FROM account WHERE age > -1');
-            const numTok = tokens.find(t => t.type === TokenType.NUMBER);
+            const numTok = tokens.find((t) => t.type === TokenType.NUMBER);
             expect(numTok).toBeDefined();
             expect(numTok!.value).toBe('-1');
         });
@@ -76,7 +75,7 @@ describe('tokenize', () => {
             expect(tokens[0].value).toBe('hello');
         });
 
-        it('handles escaped single quotes (\'\')', () => {
+        it("handles escaped single quotes ('')", () => {
             const tokens = tokenize("'it''s'");
             expect(tokens[0].type).toBe(TokenType.STRING);
             expect(tokens[0].value).toBe("it's");
@@ -221,7 +220,7 @@ describe('tokenize', () => {
     describe('comments', () => {
         it('skips single-line comments', () => {
             const tokens = tokenize('SELECT -- this is a comment\nname FROM account');
-            const types = tokens.map(t => t.type);
+            const types = tokens.map((t) => t.type);
             expect(types).toEqual([
                 TokenType.SELECT,
                 TokenType.IDENTIFIER,
@@ -233,7 +232,7 @@ describe('tokenize', () => {
 
         it('skips multi-line comments', () => {
             const tokens = tokenize('SELECT /* pick name */ name FROM account');
-            const types = tokens.map(t => t.type);
+            const types = tokens.map((t) => t.type);
             expect(types).toEqual([
                 TokenType.SELECT,
                 TokenType.IDENTIFIER,
@@ -245,7 +244,7 @@ describe('tokenize', () => {
 
         it('skips multi-line comments spanning multiple lines', () => {
             const tokens = tokenize('SELECT\n/* line1\nline2 */\nname FROM account');
-            const types = tokens.map(t => t.type);
+            const types = tokens.map((t) => t.type);
             expect(types).toEqual([
                 TokenType.SELECT,
                 TokenType.IDENTIFIER,
@@ -355,7 +354,7 @@ describe('tokenize', () => {
 
         it('SELECT [name] FROM [account] parses correctly', () => {
             const tokens = tokenize('SELECT [name] FROM [account]');
-            const types = tokens.map(t => t.type);
+            const types = tokens.map((t) => t.type);
             expect(types).toEqual([
                 TokenType.SELECT,
                 TokenType.IDENTIFIER,
@@ -373,17 +372,17 @@ describe('tokenize', () => {
     describe('complex query tokenization', () => {
         it('tokenizes a full query without throwing', () => {
             const sql =
-                "SELECT a.name, COUNT(DISTINCT b.id) FROM account a INNER JOIN contact b " +
+                'SELECT a.name, COUNT(DISTINCT b.id) FROM account a INNER JOIN contact b ' +
                 "ON a.id = b.accountid WHERE a.status = 'active' ORDER BY a.name ASC";
             expect(() => tokenize(sql)).not.toThrow();
         });
 
         it('produces correct high-level token sequence for complex query', () => {
             const sql =
-                "SELECT a.name, COUNT(DISTINCT b.id) FROM account a INNER JOIN contact b " +
+                'SELECT a.name, COUNT(DISTINCT b.id) FROM account a INNER JOIN contact b ' +
                 "ON a.id = b.accountid WHERE a.status = 'active' ORDER BY a.name ASC";
             const tokens = tokenize(sql);
-            const types = tokens.map(t => t.type);
+            const types = tokens.map((t) => t.type);
 
             // High-level shape check
             expect(types[0]).toBe(TokenType.SELECT);
@@ -400,5 +399,4 @@ describe('tokenize', () => {
             expect(types[types.length - 1]).toBe(TokenType.EOF);
         });
     });
-
 });

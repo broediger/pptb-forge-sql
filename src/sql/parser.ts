@@ -26,13 +26,7 @@ import {
     OrderByItem,
 } from './types';
 
-const AGGREGATE_FUNCTIONS: TokenType[] = [
-    TokenType.COUNT,
-    TokenType.SUM,
-    TokenType.AVG,
-    TokenType.MIN,
-    TokenType.MAX,
-];
+const AGGREGATE_FUNCTIONS: TokenType[] = [TokenType.COUNT, TokenType.SUM, TokenType.AVG, TokenType.MIN, TokenType.MAX];
 
 // ── Shared token-walking infrastructure ──
 
@@ -57,11 +51,7 @@ function makeWalker(tokens: Token[]) {
     function expect(type: TokenType): Token {
         if (!check(type)) {
             const t = peek();
-            throw new SqlParseError(
-                `Expected ${type} but got '${t.value || t.type}'`,
-                t.line,
-                t.column,
-            );
+            throw new SqlParseError(`Expected ${type} but got '${t.value || t.type}'`, t.line, t.column);
         }
         return advance();
     }
@@ -112,37 +102,51 @@ function makeWalker(tokens: Token[]) {
         ) {
             return advance();
         }
-        throw new SqlParseError(
-            `Expected identifier but got '${t.value || t.type}'`,
-            t.line,
-            t.column,
-        );
+        throw new SqlParseError(`Expected identifier but got '${t.value || t.type}'`, t.line, t.column);
     }
 
     function parseLiteral(): LiteralValue {
         const t = peek();
-        if (t.type === TokenType.STRING) { advance(); return t.value; }
-        if (t.type === TokenType.NUMBER) { advance(); return Number(t.value); }
-        if (t.type === TokenType.TRUE)   { advance(); return true; }
-        if (t.type === TokenType.FALSE)  { advance(); return false; }
-        if (t.type === TokenType.NULL)   { advance(); return null; }
-        throw new SqlParseError(
-            `Expected literal value but got '${t.value || t.type}'`,
-            t.line,
-            t.column,
-        );
+        if (t.type === TokenType.STRING) {
+            advance();
+            return t.value;
+        }
+        if (t.type === TokenType.NUMBER) {
+            advance();
+            return Number(t.value);
+        }
+        if (t.type === TokenType.TRUE) {
+            advance();
+            return true;
+        }
+        if (t.type === TokenType.FALSE) {
+            advance();
+            return false;
+        }
+        if (t.type === TokenType.NULL) {
+            advance();
+            return null;
+        }
+        throw new SqlParseError(`Expected literal value but got '${t.value || t.type}'`, t.line, t.column);
     }
 
     function parseComparisonOp(): ComparisonOp {
         const t = advance();
         switch (t.type) {
-            case TokenType.EQUALS:        return '=';
-            case TokenType.NOT_EQUALS:    return '!=';
-            case TokenType.LESS_THAN:     return '<';
-            case TokenType.GREATER_THAN:  return '>';
-            case TokenType.LESS_EQUAL:    return '<=';
-            case TokenType.GREATER_EQUAL: return '>=';
-            case TokenType.LIKE:          return 'LIKE';
+            case TokenType.EQUALS:
+                return '=';
+            case TokenType.NOT_EQUALS:
+                return '!=';
+            case TokenType.LESS_THAN:
+                return '<';
+            case TokenType.GREATER_THAN:
+                return '>';
+            case TokenType.LESS_EQUAL:
+                return '<=';
+            case TokenType.GREATER_EQUAL:
+                return '>=';
+            case TokenType.LIKE:
+                return 'LIKE';
             default:
                 throw new SqlParseError(
                     `Expected comparison operator but got '${t.value || t.type}'`,
@@ -199,7 +203,10 @@ function makeWalker(tokens: Token[]) {
             const fnName = fnToken.type as 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX';
             expect(TokenType.LPAREN);
             let distinct = false;
-            if (check(TokenType.DISTINCT)) { advance(); distinct = true; }
+            if (check(TokenType.DISTINCT)) {
+                advance();
+                distinct = true;
+            }
             let col: ColumnRef;
             if (check(TokenType.STAR)) {
                 advance();
@@ -240,13 +247,17 @@ function makeWalker(tokens: Token[]) {
         if (check(TokenType.IS)) {
             advance();
             let negated = false;
-            if (check(TokenType.NOT)) { advance(); negated = true; }
+            if (check(TokenType.NOT)) {
+                advance();
+                negated = true;
+            }
             expect(TokenType.NULL);
             return { kind: 'is_null', column: col, negated } as IsNullExpr;
         }
 
         if (check(TokenType.NOT) && peek(1).type === TokenType.BETWEEN) {
-            advance(); advance();
+            advance();
+            advance();
             const low = parseLiteral();
             expect(TokenType.AND);
             const high = parseLiteral();
@@ -262,10 +273,14 @@ function makeWalker(tokens: Token[]) {
         }
 
         if (check(TokenType.NOT) && peek(1).type === TokenType.IN) {
-            advance(); advance();
+            advance();
+            advance();
             expect(TokenType.LPAREN);
             const values: LiteralValue[] = [parseLiteral()];
-            while (check(TokenType.COMMA)) { advance(); values.push(parseLiteral()); }
+            while (check(TokenType.COMMA)) {
+                advance();
+                values.push(parseLiteral());
+            }
             expect(TokenType.RPAREN);
             return { kind: 'in', column: col, values, negated: true } as InExpr;
         }
@@ -274,7 +289,10 @@ function makeWalker(tokens: Token[]) {
             advance();
             expect(TokenType.LPAREN);
             const values: LiteralValue[] = [parseLiteral()];
-            while (check(TokenType.COMMA)) { advance(); values.push(parseLiteral()); }
+            while (check(TokenType.COMMA)) {
+                advance();
+                values.push(parseLiteral());
+            }
             expect(TokenType.RPAREN);
             return { kind: 'in', column: col, values } as InExpr;
         }
@@ -360,7 +378,10 @@ function parseSelect(tokens: Token[]): SelectStatement {
             const fnName = fnToken.type as 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX';
             expect(TokenType.LPAREN);
             let distinct = false;
-            if (check(TokenType.DISTINCT)) { advance(); distinct = true; }
+            if (check(TokenType.DISTINCT)) {
+                advance();
+                distinct = true;
+            }
             let col: ColumnRef;
             if (check(TokenType.STAR)) {
                 advance();
@@ -388,7 +409,10 @@ function parseSelect(tokens: Token[]): SelectStatement {
 
     function parseSelectList(): SelectExpr[] {
         const exprs: SelectExpr[] = [parseSelectExpr()];
-        while (check(TokenType.COMMA)) { advance(); exprs.push(parseSelectExpr()); }
+        while (check(TokenType.COMMA)) {
+            advance();
+            exprs.push(parseSelectExpr());
+        }
         return exprs;
     }
 
@@ -411,7 +435,8 @@ function parseSelect(tokens: Token[]): SelectStatement {
             let joinType: JoinType | null = null;
 
             if (check(TokenType.INNER) && peek(1).type === TokenType.JOIN) {
-                advance(); advance();
+                advance();
+                advance();
                 joinType = 'INNER';
             } else if (check(TokenType.LEFT)) {
                 advance();
@@ -437,10 +462,7 @@ function parseSelect(tokens: Token[]): SelectStatement {
             if (check(TokenType.AS)) {
                 advance();
                 alias = expectIdentifierOrKeyword().value;
-            } else if (
-                peek().type === TokenType.IDENTIFIER &&
-                peek().type !== TokenType.ON
-            ) {
+            } else if (peek().type === TokenType.IDENTIFIER && peek().type !== TokenType.ON) {
                 if (peek().type === TokenType.IDENTIFIER) {
                     alias = advance().value;
                 }
@@ -458,7 +480,10 @@ function parseSelect(tokens: Token[]): SelectStatement {
 
     function parseGroupBy(): ColumnRef[] {
         const cols: ColumnRef[] = [parseColumnRef()];
-        while (check(TokenType.COMMA)) { advance(); cols.push(parseColumnRef()); }
+        while (check(TokenType.COMMA)) {
+            advance();
+            cols.push(parseColumnRef());
+        }
         return cols;
     }
 
@@ -468,8 +493,13 @@ function parseSelect(tokens: Token[]): SelectStatement {
             if (items.length > 0) advance();
             const col = parseColumnRef();
             let direction: 'ASC' | 'DESC' = 'ASC';
-            if (check(TokenType.ASC)) { advance(); direction = 'ASC'; }
-            else if (check(TokenType.DESC)) { advance(); direction = 'DESC'; }
+            if (check(TokenType.ASC)) {
+                advance();
+                direction = 'ASC';
+            } else if (check(TokenType.DESC)) {
+                advance();
+                direction = 'DESC';
+            }
             items.push({ column: col, direction });
         } while (check(TokenType.COMMA));
         return items;
@@ -480,7 +510,10 @@ function parseSelect(tokens: Token[]): SelectStatement {
     expect(TokenType.SELECT);
 
     let distinct = false;
-    if (check(TokenType.DISTINCT)) { advance(); distinct = true; }
+    if (check(TokenType.DISTINCT)) {
+        advance();
+        distinct = true;
+    }
 
     let top: number | undefined;
     if (check(TokenType.TOP)) {
@@ -496,16 +529,30 @@ function parseSelect(tokens: Token[]): SelectStatement {
     const joins = parseJoins();
 
     let where: WhereExpr | undefined;
-    if (check(TokenType.WHERE)) { advance(); where = parseWhereOr(); }
+    if (check(TokenType.WHERE)) {
+        advance();
+        where = parseWhereOr();
+    }
 
     let groupBy: ColumnRef[] | undefined;
-    if (check(TokenType.GROUP)) { advance(); expect(TokenType.BY); groupBy = parseGroupBy(); }
+    if (check(TokenType.GROUP)) {
+        advance();
+        expect(TokenType.BY);
+        groupBy = parseGroupBy();
+    }
 
     let having: WhereExpr | undefined;
-    if (check(TokenType.HAVING)) { advance(); having = parseWhereOr(); }
+    if (check(TokenType.HAVING)) {
+        advance();
+        having = parseWhereOr();
+    }
 
     let orderBy: OrderByItem[] | undefined;
-    if (check(TokenType.ORDER)) { advance(); expect(TokenType.BY); orderBy = parseOrderBy(); }
+    if (check(TokenType.ORDER)) {
+        advance();
+        expect(TokenType.BY);
+        orderBy = parseOrderBy();
+    }
 
     expect(TokenType.EOF);
 
@@ -548,7 +595,10 @@ function parseInsert(tokens: Token[]): InsertStatement {
     function parseValueRow(): LiteralValue[] {
         expect(TokenType.LPAREN);
         const row: LiteralValue[] = [parseLiteral()];
-        while (check(TokenType.COMMA)) { advance(); row.push(parseLiteral()); }
+        while (check(TokenType.COMMA)) {
+            advance();
+            row.push(parseLiteral());
+        }
         expect(TokenType.RPAREN);
         return row;
     }
@@ -666,11 +716,7 @@ export function parseStatement(tokens: Token[]): Statement {
         case TokenType.DELETE:
             return parseDelete(tokens);
         default:
-            throw new SqlParseError(
-                `Expected SELECT, INSERT, UPDATE, or DELETE`,
-                first.line,
-                first.column,
-            );
+            throw new SqlParseError(`Expected SELECT, INSERT, UPDATE, or DELETE`, first.line, first.column);
     }
 }
 

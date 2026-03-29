@@ -19,16 +19,15 @@ const parseSQL = (sql: string): SelectStatement => parse(tokenize(sql));
 
 // Helper to cast WhereExpr kinds
 const asComparison = (e: unknown) => e as ComparisonExpr;
-const asLogical    = (e: unknown) => e as LogicalExpr;
-const asBetween    = (e: unknown) => e as BetweenExpr;
-const asIn         = (e: unknown) => e as InExpr;
-const asIsNull     = (e: unknown) => e as IsNullExpr;
-const asNot        = (e: unknown) => e as NotExpr;
-const asColumnRef  = (e: unknown) => e as ColumnRef;
-const asAggregate  = (e: unknown) => e as AggregateExpr;
+const asLogical = (e: unknown) => e as LogicalExpr;
+const asBetween = (e: unknown) => e as BetweenExpr;
+const asIn = (e: unknown) => e as InExpr;
+const asIsNull = (e: unknown) => e as IsNullExpr;
+const asNot = (e: unknown) => e as NotExpr;
+const asColumnRef = (e: unknown) => e as ColumnRef;
+const asAggregate = (e: unknown) => e as AggregateExpr;
 
 describe('parse', () => {
-
     // ── Simple SELECT ─────────────────────────────────────────────────────────
 
     describe('simple select', () => {
@@ -314,21 +313,21 @@ describe('parse', () => {
     describe('INNER JOIN', () => {
         it('produces one join entry', () => {
             const ast = parseSQL(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(ast.joins).toHaveLength(1);
         });
 
         it('join type is INNER', () => {
             const ast = parseSQL(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(ast.joins[0].type).toBe('INNER');
         });
 
         it('join table and alias are correct', () => {
             const ast = parseSQL(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(ast.joins[0].table).toBe('contact');
             expect(ast.joins[0].alias).toBe('c');
@@ -336,7 +335,7 @@ describe('parse', () => {
 
         it('join ON condition is parsed', () => {
             const ast = parseSQL(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             const on = asComparison(ast.joins[0].on);
             expect(on.kind).toBe('comparison');
@@ -347,7 +346,7 @@ describe('parse', () => {
     describe('LEFT JOIN', () => {
         it('join type is LEFT', () => {
             const ast = parseSQL(
-                'SELECT a.name FROM account a LEFT JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name FROM account a LEFT JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(ast.joins[0].type).toBe('LEFT');
         });
@@ -357,9 +356,9 @@ describe('parse', () => {
         it('parses two joins', () => {
             const ast = parseSQL(
                 'SELECT a.name, c.fullname, t.subject ' +
-                'FROM account a ' +
-                'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
-                'LEFT JOIN task t ON c.contactid = t.regardingobjectid'
+                    'FROM account a ' +
+                    'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
+                    'LEFT JOIN task t ON c.contactid = t.regardingobjectid',
             );
             expect(ast.joins).toHaveLength(2);
             expect(ast.joins[0].type).toBe('INNER');
@@ -408,16 +407,12 @@ describe('parse', () => {
 
     describe('GROUP BY with HAVING', () => {
         it('parses HAVING clause', () => {
-            const ast = parseSQL(
-                'SELECT status, COUNT(id) FROM account GROUP BY status HAVING COUNT(id) > 5'
-            );
+            const ast = parseSQL('SELECT status, COUNT(id) FROM account GROUP BY status HAVING COUNT(id) > 5');
             expect(ast.having).toBeDefined();
         });
 
         it('HAVING condition has correct operator', () => {
-            const ast = parseSQL(
-                'SELECT status, COUNT(id) FROM account GROUP BY status HAVING COUNT(id) > 5'
-            );
+            const ast = parseSQL('SELECT status, COUNT(id) FROM account GROUP BY status HAVING COUNT(id) > 5');
             // The HAVING expression is a comparison; exact structure depends on implementation
             expect(ast.having!.kind).toBeDefined();
         });
@@ -428,22 +423,19 @@ describe('parse', () => {
     describe('complex combined query', () => {
         it('parses without throwing', () => {
             const sql =
-                "SELECT DISTINCT TOP 50 a.name, c.fullname, COUNT(t.taskid) " +
-                "FROM account a " +
-                "INNER JOIN contact c ON a.accountid = c.parentcustomerid " +
-                "LEFT JOIN task t ON c.contactid = t.regardingobjectid " +
-                "WHERE a.statecode = 0 AND c.statuscode = 1 " +
-                "GROUP BY a.name, c.fullname " +
-                "ORDER BY a.name ASC";
+                'SELECT DISTINCT TOP 50 a.name, c.fullname, COUNT(t.taskid) ' +
+                'FROM account a ' +
+                'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
+                'LEFT JOIN task t ON c.contactid = t.regardingobjectid ' +
+                'WHERE a.statecode = 0 AND c.statuscode = 1 ' +
+                'GROUP BY a.name, c.fullname ' +
+                'ORDER BY a.name ASC';
             expect(() => parseSQL(sql)).not.toThrow();
         });
 
         it('sets all top-level flags on complex query', () => {
             const sql =
-                "SELECT DISTINCT TOP 50 a.name " +
-                "FROM account a " +
-                "WHERE a.statecode = 0 " +
-                "ORDER BY a.name ASC";
+                'SELECT DISTINCT TOP 50 a.name ' + 'FROM account a ' + 'WHERE a.statecode = 0 ' + 'ORDER BY a.name ASC';
             const ast = parseSQL(sql);
             expect(ast.distinct).toBe(true);
             expect(ast.top).toBe(50);
@@ -503,5 +495,4 @@ describe('parse', () => {
             expect(cmp.right).toBeCloseTo(-3.5);
         });
     });
-
 });

@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 
 export interface ForgeSettings {
-    batchSize: number;           // DML batch size (default 50)
-    quotedIdentifiers: boolean;  // already supported in lexer, this is just a setting display
-    showFetchXml: boolean;       // auto-show FetchXML tab after execution
+    batchSize: number; // DML batch size (default 50)
+    quotedIdentifiers: boolean; // already supported in lexer, this is just a setting display
+    showFetchXml: boolean; // auto-show FetchXML tab after execution
 }
 
 const DEFAULT_SETTINGS: ForgeSettings = {
@@ -32,7 +32,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     loadFromToolbox: async () => {
         try {
-            const saved = await window.toolboxAPI.settings.get('forgeSettings') as Partial<ForgeSettings> | undefined;
+            const saved = (await window.toolboxAPI.settings.get('forgeSettings')) as Partial<ForgeSettings> | undefined;
             if (saved && typeof saved === 'object') {
                 set({ settings: { ...DEFAULT_SETTINGS, ...saved } });
             }

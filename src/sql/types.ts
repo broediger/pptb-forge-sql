@@ -50,11 +50,11 @@ export enum TokenType {
     STRING = 'STRING',
 
     // Operators
-    EQUALS = 'EQUALS',             // =
-    NOT_EQUALS = 'NOT_EQUALS',     // != or <>
-    LESS_THAN = 'LESS_THAN',       // <
+    EQUALS = 'EQUALS', // =
+    NOT_EQUALS = 'NOT_EQUALS', // != or <>
+    LESS_THAN = 'LESS_THAN', // <
     GREATER_THAN = 'GREATER_THAN', // >
-    LESS_EQUAL = 'LESS_EQUAL',     // <=
+    LESS_EQUAL = 'LESS_EQUAL', // <=
     GREATER_EQUAL = 'GREATER_EQUAL', // >=
 
     // Punctuation
@@ -78,8 +78,8 @@ export interface Token {
 // ── AST node types ──
 
 export interface ColumnRef {
-    table?: string;   // e.g. "a" in a.name
-    column: string;   // e.g. "name" or "*"
+    table?: string; // e.g. "a" in a.name
+    column: string; // e.g. "name" or "*"
     alias?: string;
 }
 
@@ -153,13 +153,7 @@ export interface NotExpr {
     expr: WhereExpr;
 }
 
-export type WhereExpr =
-    | ComparisonExpr
-    | BetweenExpr
-    | InExpr
-    | IsNullExpr
-    | LogicalExpr
-    | NotExpr;
+export type WhereExpr = ComparisonExpr | BetweenExpr | InExpr | IsNullExpr | LogicalExpr | NotExpr;
 
 export type LiteralValue = string | number | boolean | null;
 

@@ -63,7 +63,9 @@ function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
                     break;
                 }
             }
-            if (!renamed) { /* drop unknown @-keys */ }
+            if (!renamed) {
+                /* drop unknown @-keys */
+            }
         }
 
         // Second pass: create friendly aliases for lookups and formatted values
@@ -103,9 +105,7 @@ function extractColumns(rows: Record<string, unknown>[]): string[] {
  * virtual names like owneridname) so only those are displayed.
  */
 function getRequestedColumns(stmt: SelectStatement): string[] | null {
-    const hasStar = stmt.columns.some(
-        (c) => !('function' in c) && c.column === '*' && !c.table,
-    );
+    const hasStar = stmt.columns.some((c) => !('function' in c) && c.column === '*' && !c.table);
     if (hasStar) return null; // SELECT * → show everything
 
     return stmt.columns.map((c) => {
@@ -145,13 +145,8 @@ function rewriteVirtualColumns(stmt: SelectStatement): SelectStatement {
     return changed ? { ...stmt, columns: newColumns } : stmt;
 }
 
-
 function xmlEscape(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function injectPagingIntoFetchXml(fetchXml: string, pagingCookie: string, page: number): string {
@@ -159,10 +154,7 @@ function injectPagingIntoFetchXml(fetchXml: string, pagingCookie: string, page: 
     // not URL-encode again. Instead, XML-escape the raw cookie for safe embedding
     // in an XML attribute value.
     const escapedCookie = xmlEscape(pagingCookie);
-    return fetchXml.replace(
-        /^(\s*<fetch\b)([^>]*)(>)/,
-        `$1$2 page="${page}" paging-cookie="${escapedCookie}"$3`,
-    );
+    return fetchXml.replace(/^(\s*<fetch\b)([^>]*)(>)/, `$1$2 page="${page}" paging-cookie="${escapedCookie}"$3`);
 }
 
 export function useQueryExecution(): QueryExecutionReturn {
@@ -232,9 +224,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 // If the user specified explicit columns, only show those
                 // (matched against the cleaned result keys). Otherwise show all.
                 const allColumns = extractColumns(rows);
-                const columns = requestedCols
-                    ? requestedCols.filter((c) => allColumns.includes(c))
-                    : allColumns;
+                const columns = requestedCols ? requestedCols.filter((c) => allColumns.includes(c)) : allColumns;
 
                 setState((prev) => ({
                     ...prev,
@@ -325,11 +315,7 @@ export function useQueryExecution(): QueryExecutionReturn {
         const nextPage = pageRef.current;
         const capturedGeneration = generationRef.current;
 
-        const paginatedFetchXml = injectPagingIntoFetchXml(
-            snapshotFetchXml,
-            snapshotPagingCookie,
-            nextPage,
-        );
+        const paginatedFetchXml = injectPagingIntoFetchXml(snapshotFetchXml, snapshotPagingCookie, nextPage);
 
         const start = performance.now();
 
@@ -345,9 +331,7 @@ export function useQueryExecution(): QueryExecutionReturn {
 
             const allResults = [...snapshotResults, ...rows];
 
-            const columns = allResults.length > 0
-                    ? extractColumns(allResults)
-                    : snapshotColumns;
+            const columns = allResults.length > 0 ? extractColumns(allResults) : snapshotColumns;
 
             setState((prev) => ({
                 ...prev,

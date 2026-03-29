@@ -1,14 +1,14 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 /* Base styles for the app */
 body {
-  margin: 0;
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  overflow: hidden;
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    overflow: hidden;
 }
 
 /* Ensure Monaco editor containers don't overflow */
 .monaco-editor-container {
-  overflow: hidden;
+    overflow: hidden;
 }

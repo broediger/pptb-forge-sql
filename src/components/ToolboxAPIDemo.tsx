@@ -19,7 +19,7 @@ export const ToolboxAPIDemo: React.FC<ToolboxAPIDemoProps> = ({ onLog }) => {
                 onLog(`Error showing notification: ${(error as Error).message}`, 'error');
             }
         },
-        [onLog]
+        [onLog],
     );
 
     const copyToClipboard = useCallback(async () => {
@@ -53,7 +53,10 @@ export const ToolboxAPIDemo: React.FC<ToolboxAPIDemoProps> = ({ onLog }) => {
                 message: 'Export from React Sample Tool',
             };
 
-            const filePath = await window.toolboxAPI.fileSystem.saveFile('react-export.json', JSON.stringify(data, null, 2));
+            const filePath = await window.toolboxAPI.fileSystem.saveFile(
+                'react-export.json',
+                JSON.stringify(data, null, 2),
+            );
 
             if (filePath) {
                 await showNotification('File Saved', `File saved to: ${filePath}`, 'success');
@@ -73,16 +76,28 @@ export const ToolboxAPIDemo: React.FC<ToolboxAPIDemoProps> = ({ onLog }) => {
             <div className="example-group">
                 <h3>Notifications</h3>
                 <div className="button-group">
-                    <button onClick={() => showNotification('Success!', 'Operation completed successfully', 'success')} className="btn btn-success">
+                    <button
+                        onClick={() => showNotification('Success!', 'Operation completed successfully', 'success')}
+                        className="btn btn-success"
+                    >
                         Show Success
                     </button>
-                    <button onClick={() => showNotification('Information', 'This is an informational message', 'info')} className="btn btn-info">
+                    <button
+                        onClick={() => showNotification('Information', 'This is an informational message', 'info')}
+                        className="btn btn-info"
+                    >
                         Show Info
                     </button>
-                    <button onClick={() => showNotification('Warning', 'Please review this warning', 'warning')} className="btn btn-warning">
+                    <button
+                        onClick={() => showNotification('Warning', 'Please review this warning', 'warning')}
+                        className="btn btn-warning"
+                    >
                         Show Warning
                     </button>
-                    <button onClick={() => showNotification('Error', 'An error has occurred', 'error')} className="btn btn-error">
+                    <button
+                        onClick={() => showNotification('Error', 'An error has occurred', 'error')}
+                        className="btn btn-error"
+                    >
                         Show Error
                     </button>
                 </div>

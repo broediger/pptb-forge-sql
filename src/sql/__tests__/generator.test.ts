@@ -9,7 +9,6 @@ const toFetchXml = (sql: string): string => generateFetchXml(parse(tokenize(sql)
 const strip = (xml: string) => xml.replace(/\s+/g, ' ').trim();
 
 describe('generateFetchXml', () => {
-
     // ── Simple SELECT ─────────────────────────────────────────────────────────
 
     describe('simple select', () => {
@@ -153,16 +152,12 @@ describe('generateFetchXml', () => {
 
     describe('WHERE AND', () => {
         it('emits filter type="and"', () => {
-            const xml = toFetchXml(
-                "SELECT name FROM account WHERE status = 'active' AND revenue > 1000"
-            );
+            const xml = toFetchXml("SELECT name FROM account WHERE status = 'active' AND revenue > 1000");
             expect(strip(xml)).toContain('type="and"');
         });
 
         it('contains two condition elements', () => {
-            const xml = toFetchXml(
-                "SELECT name FROM account WHERE status = 'active' AND revenue > 1000"
-            );
+            const xml = toFetchXml("SELECT name FROM account WHERE status = 'active' AND revenue > 1000");
             const matches = strip(xml).match(/<condition/g) ?? [];
             expect(matches.length).toBeGreaterThanOrEqual(2);
         });
@@ -170,9 +165,7 @@ describe('generateFetchXml', () => {
 
     describe('WHERE OR', () => {
         it('emits filter type="or"', () => {
-            const xml = toFetchXml(
-                "SELECT name FROM account WHERE status = 'active' OR status = 'pending'"
-            );
+            const xml = toFetchXml("SELECT name FROM account WHERE status = 'active' OR status = 'pending'");
             expect(strip(xml)).toContain('type="or"');
         });
     });
@@ -210,28 +203,28 @@ describe('generateFetchXml', () => {
     describe('INNER JOIN', () => {
         it('emits a <link-entity> element', () => {
             const xml = toFetchXml(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(strip(xml)).toContain('link-entity');
         });
 
         it('sets link-type="inner"', () => {
             const xml = toFetchXml(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(strip(xml)).toContain('link-type="inner"');
         });
 
         it('sets from to the link-entity attribute (parentcustomerid)', () => {
             const xml = toFetchXml(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(strip(xml)).toContain('from="parentcustomerid"');
         });
 
         it('sets to to the parent entity attribute (accountid)', () => {
             const xml = toFetchXml(
-                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(strip(xml)).toContain('to="accountid"');
         });
@@ -240,7 +233,7 @@ describe('generateFetchXml', () => {
     describe('LEFT JOIN', () => {
         it('sets link-type="outer"', () => {
             const xml = toFetchXml(
-                'SELECT a.name FROM account a LEFT JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name FROM account a LEFT JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(strip(xml)).toContain('link-type="outer"');
         });
@@ -323,7 +316,7 @@ describe('generateFetchXml', () => {
         });
 
         it('escapes " in string values', () => {
-            const xml = toFetchXml('SELECT name FROM account WHERE name = \'A"B\'');
+            const xml = toFetchXml("SELECT name FROM account WHERE name = 'A\"B'");
             expect(strip(xml)).toContain('&quot;');
         });
 
@@ -353,7 +346,7 @@ describe('generateFetchXml', () => {
         });
 
         it('applies De Morgan to NOT (a AND b) → OR(NOT a, NOT b)', () => {
-            const xml = toFetchXml("SELECT * FROM t WHERE NOT (a = 1 AND b = 2)");
+            const xml = toFetchXml('SELECT * FROM t WHERE NOT (a = 1 AND b = 2)');
             const s = strip(xml);
             expect(s).toContain('type="or"');
             expect(s).toContain('operator="neq"');
@@ -369,9 +362,9 @@ describe('generateFetchXml', () => {
 
     describe('RIGHT JOIN', () => {
         it('throws an error because FetchXML does not support RIGHT JOIN', () => {
-            expect(() => toFetchXml(
-                'SELECT a.name FROM account a RIGHT JOIN contact c ON a.accountid = c.parentcustomerid'
-            )).toThrow(/RIGHT JOIN/);
+            expect(() =>
+                toFetchXml('SELECT a.name FROM account a RIGHT JOIN contact c ON a.accountid = c.parentcustomerid'),
+            ).toThrow(/RIGHT JOIN/);
         });
     });
 
@@ -380,7 +373,7 @@ describe('generateFetchXml', () => {
     describe('table-qualified WHERE', () => {
         it('emits entityname for conditions on joined table columns', () => {
             const xml = toFetchXml(
-                "SELECT a.name FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid WHERE c.status = 'active'"
+                "SELECT a.name FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid WHERE c.status = 'active'",
             );
             expect(strip(xml)).toContain('entityname="c"');
         });
@@ -390,9 +383,7 @@ describe('generateFetchXml', () => {
 
     describe('HAVING aggregate conditions', () => {
         it('references aggregate by alias in HAVING condition', () => {
-            const xml = toFetchXml(
-                'SELECT status, COUNT(id) FROM account GROUP BY status HAVING COUNT(id) > 5'
-            );
+            const xml = toFetchXml('SELECT status, COUNT(id) FROM account GROUP BY status HAVING COUNT(id) > 5');
             const s = strip(xml);
             expect(s).toContain('aggregate="true"');
             expect(s).toContain('aggregate="count"');
@@ -406,9 +397,7 @@ describe('generateFetchXml', () => {
 
     describe('column-to-column comparison', () => {
         it('throws when WHERE compares two columns', () => {
-            expect(() => toFetchXml(
-                'SELECT * FROM account WHERE name = othername'
-            )).toThrow(/not supported/);
+            expect(() => toFetchXml('SELECT * FROM account WHERE name = othername')).toThrow(/not supported/);
         });
     });
 
@@ -417,11 +406,11 @@ describe('generateFetchXml', () => {
     describe('complex end-to-end query', () => {
         it('generates valid-looking FetchXML for a multi-clause query', () => {
             const sql =
-                "SELECT DISTINCT TOP 25 a.name, c.fullname " +
-                "FROM account a " +
-                "INNER JOIN contact c ON a.accountid = c.parentcustomerid " +
-                "WHERE a.statecode = 0 " +
-                "ORDER BY a.name ASC";
+                'SELECT DISTINCT TOP 25 a.name, c.fullname ' +
+                'FROM account a ' +
+                'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
+                'WHERE a.statecode = 0 ' +
+                'ORDER BY a.name ASC';
             const xml = toFetchXml(sql);
             const s = strip(xml);
 
@@ -517,8 +506,8 @@ describe('generateFetchXml', () => {
         it('emits entityname attribute on <order> for joined column', () => {
             const xml = toFetchXml(
                 'SELECT a.name, c.fullname FROM account a ' +
-                'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
-                'ORDER BY c.fullname'
+                    'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
+                    'ORDER BY c.fullname',
             );
             expect(strip(xml)).toContain('entityname="c"');
         });
@@ -526,8 +515,8 @@ describe('generateFetchXml', () => {
         it('emits attribute="fullname" on the <order> element', () => {
             const xml = toFetchXml(
                 'SELECT a.name, c.fullname FROM account a ' +
-                'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
-                'ORDER BY c.fullname'
+                    'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
+                    'ORDER BY c.fullname',
             );
             const s = strip(xml);
             expect(s).toMatch(/order attribute="fullname"[^/]*entityname="c"/);
@@ -536,8 +525,8 @@ describe('generateFetchXml', () => {
         it('does not emit entityname on <order> for main entity column', () => {
             const xml = toFetchXml(
                 'SELECT a.name FROM account a ' +
-                'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
-                'ORDER BY a.name'
+                    'INNER JOIN contact c ON a.accountid = c.parentcustomerid ' +
+                    'ORDER BY a.name',
             );
             const s = strip(xml);
             // order for main entity should not have entityname
@@ -550,24 +539,21 @@ describe('generateFetchXml', () => {
     describe('SELECT c.* on JOIN emits <all-attributes /> (Bug 7)', () => {
         it('emits <all-attributes /> inside <link-entity> for wildcard join column', () => {
             const xml = toFetchXml(
-                'SELECT a.name, c.* FROM account a ' +
-                'INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.* FROM account a ' + 'INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(strip(xml)).toContain('all-attributes');
         });
 
         it('does not self-close <link-entity> when join has wildcard', () => {
             const xml = toFetchXml(
-                'SELECT a.name, c.* FROM account a ' +
-                'INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.* FROM account a ' + 'INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             expect(strip(xml)).toContain('</link-entity>');
         });
 
         it('emits <all-attributes /> between open and close link-entity tags', () => {
             const xml = toFetchXml(
-                'SELECT a.name, c.* FROM account a ' +
-                'INNER JOIN contact c ON a.accountid = c.parentcustomerid'
+                'SELECT a.name, c.* FROM account a ' + 'INNER JOIN contact c ON a.accountid = c.parentcustomerid',
             );
             const s = strip(xml);
             const linkOpen = s.indexOf('<link-entity');
@@ -577,5 +563,4 @@ describe('generateFetchXml', () => {
             expect(allAttr).toBeLessThan(linkClose);
         });
     });
-
 });

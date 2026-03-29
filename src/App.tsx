@@ -33,8 +33,14 @@ interface TabResults {
 }
 
 const EMPTY_TAB_RESULTS: TabResults = {
-    results: null, columns: [], fetchXml: null, error: null,
-    executionTime: null, rowCount: null, dmlResult: null, dmlError: null,
+    results: null,
+    columns: [],
+    fetchXml: null,
+    error: null,
+    executionTime: null,
+    rowCount: null,
+    dmlResult: null,
+    dmlError: null,
 };
 
 interface QueryTab {
@@ -69,8 +75,8 @@ export default function App() {
     const { connection, isLoading: connectionLoading, refreshConnection } = useConnection();
     const queryExec = useQueryExecution();
     const dml = useDmlExecution();
-    const addEntry = useHistoryStore(s => s.addEntry);
-    const resetSchema = useSchemaStore(s => s.reset);
+    const addEntry = useHistoryStore((s) => s.addEntry);
+    const resetSchema = useSchemaStore((s) => s.reset);
 
     // Sync query execution state into the TAB THAT STARTED the execution (not the currently active tab)
     useEffect(() => {
@@ -79,7 +85,7 @@ export default function App() {
             setTabResults((prev) => ({
                 ...prev,
                 [tabId]: {
-                    ...prev[tabId] ?? EMPTY_TAB_RESULTS,
+                    ...(prev[tabId] ?? EMPTY_TAB_RESULTS),
                     results: queryExec.results,
                     columns: queryExec.columns,
                     fetchXml: queryExec.fetchXml,
@@ -89,7 +95,14 @@ export default function App() {
                 },
             }));
         }
-    }, [queryExec.results, queryExec.error, queryExec.fetchXml, queryExec.executionTime, queryExec.rowCount, queryExec.columns]);
+    }, [
+        queryExec.results,
+        queryExec.error,
+        queryExec.fetchXml,
+        queryExec.executionTime,
+        queryExec.rowCount,
+        queryExec.columns,
+    ]);
 
     // Sync DML results into the tab that started the execution
     useEffect(() => {
@@ -98,7 +111,7 @@ export default function App() {
             setTabResults((prev) => ({
                 ...prev,
                 [tabId]: {
-                    ...prev[tabId] ?? EMPTY_TAB_RESULTS,
+                    ...(prev[tabId] ?? EMPTY_TAB_RESULTS),
                     dmlResult: dml.dmlResult,
                     dmlError: dml.dmlError,
                 },
@@ -109,16 +122,12 @@ export default function App() {
     // Listen for connection changes and reset schema
     const handleToolboxEvent = useCallback(
         (event: string) => {
-            if (
-                event === 'connection:updated' ||
-                event === 'connection:created' ||
-                event === 'connection:deleted'
-            ) {
+            if (event === 'connection:updated' || event === 'connection:created' || event === 'connection:deleted') {
                 refreshConnection();
                 resetSchema();
             }
         },
-        [refreshConnection, resetSchema]
+        [refreshConnection, resetSchema],
     );
 
     useToolboxEvents(handleToolboxEvent);
@@ -127,9 +136,7 @@ export default function App() {
     const addQueryTab = useCallback(() => {
         // Save current editor content to active tab before adding
         const currentSql = editorRef.current?.getValue() ?? '';
-        setQueryTabs((prev) =>
-            prev.map((t) => (t.id === activeQueryTabId ? { ...t, sql: currentSql } : t))
-        );
+        setQueryTabs((prev) => prev.map((t) => (t.id === activeQueryTabId ? { ...t, sql: currentSql } : t)));
 
         const newId = String(Date.now());
         const newLabel = `Query ${nextTabNum}`;
@@ -169,7 +176,7 @@ export default function App() {
                 return copy;
             });
         },
-        [activeQueryTabId]
+        [activeQueryTabId],
     );
 
     const switchQueryTab = useCallback(
@@ -177,9 +184,7 @@ export default function App() {
             if (id === activeQueryTabId) return;
             // Save current editor content to departing tab
             const currentSql = editorRef.current?.getValue() ?? '';
-            setQueryTabs((prev) =>
-                prev.map((t) => (t.id === activeQueryTabId ? { ...t, sql: currentSql } : t))
-            );
+            setQueryTabs((prev) => prev.map((t) => (t.id === activeQueryTabId ? { ...t, sql: currentSql } : t)));
             setActiveQueryTabId(id);
             // Load the new tab's SQL into the editor
             setQueryTabs((prev) => {
@@ -193,7 +198,7 @@ export default function App() {
                 return prev;
             });
         },
-        [activeQueryTabId]
+        [activeQueryTabId],
     );
 
     // Ctrl+T / Cmd+T to add a new query tab
@@ -218,7 +223,7 @@ export default function App() {
             rowCount: activeTabResults.dmlResult!.affectedCount,
             statementType: activeTabResults.dmlResult!.operation,
         });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dml.dmlResult]);
 
     const handleExecute = useCallback(
@@ -244,9 +249,13 @@ export default function App() {
                 setTabResults((prev) => ({
                     ...prev,
                     [activeQueryTabId]: {
-                        ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
-                        results: null, columns: [], fetchXml: null, error: null,
-                        executionTime: null, rowCount: null,
+                        ...(prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS),
+                        results: null,
+                        columns: [],
+                        fetchXml: null,
+                        error: null,
+                        executionTime: null,
+                        rowCount: null,
                     },
                 }));
                 pendingDmlSqlRef.current = trimmed;
@@ -259,8 +268,9 @@ export default function App() {
             setTabResults((prev) => ({
                 ...prev,
                 [activeQueryTabId]: {
-                    ...prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS,
-                    dmlResult: null, dmlError: null,
+                    ...(prev[activeQueryTabId] ?? EMPTY_TAB_RESULTS),
+                    dmlResult: null,
+                    dmlError: null,
                 },
             }));
 
@@ -281,7 +291,7 @@ export default function App() {
             });
         },
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [queryExec.execute, addEntry, dml, activeQueryTabId]
+        [queryExec.execute, addEntry, dml, activeQueryTabId],
     );
 
     const handleSelectHistory = useCallback((sql: string) => {
@@ -327,7 +337,9 @@ export default function App() {
     const connectionName = connection?.name ?? connection?.url ?? null;
 
     return (
-        <div className={`h-screen w-screen flex flex-col overflow-hidden ${isDark ? 'bg-neutral-900 text-gray-100' : 'bg-white text-gray-900'}`}>
+        <div
+            className={`h-screen w-screen flex flex-col overflow-hidden ${isDark ? 'bg-neutral-900 text-gray-100' : 'bg-white text-gray-900'}`}
+        >
             {/* ── Header ────────────────────────────────────────────────── */}
             <header className="flex items-center gap-3 px-4 py-2 bg-gray-900 border-b border-neutral-700 shrink-0">
                 <div className="flex items-center gap-2">
@@ -380,9 +392,23 @@ export default function App() {
                         title="Settings"
                         aria-label="Open settings"
                     >
-                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        <svg
+                            className="h-4 w-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={1.5}
+                        >
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
+                            />
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                            />
                         </svg>
                     </button>
                 </div>
@@ -465,8 +491,8 @@ export default function App() {
                                             if (renameValue.trim()) {
                                                 setQueryTabs((prev) =>
                                                     prev.map((t) =>
-                                                        t.id === tab.id ? { ...t, label: renameValue.trim() } : t
-                                                    )
+                                                        t.id === tab.id ? { ...t, label: renameValue.trim() } : t,
+                                                    ),
                                                 );
                                             }
                                             setRenamingTabId(null);
@@ -503,8 +529,18 @@ export default function App() {
                                         title="Close tab"
                                         aria-label={`Close ${tab.label}`}
                                     >
-                                        <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                        <svg
+                                            className="h-2.5 w-2.5"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                            strokeWidth={2.5}
+                                        >
+                                            <path
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                d="M6 18L18 6M6 6l12 12"
+                                            />
                                         </svg>
                                     </button>
                                 )}
@@ -522,7 +558,13 @@ export default function App() {
                             title="New query tab (Ctrl+T / Cmd+T)"
                             aria-label="Add query tab"
                         >
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <svg
+                                className="h-3.5 w-3.5"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                strokeWidth={2}
+                            >
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                             </svg>
                         </button>
@@ -534,12 +576,16 @@ export default function App() {
                             onExecute={handleExecute}
                             editorRef={editorRef}
                             theme={theme}
-                            defaultValue={queryTabs.find((t) => t.id === activeQueryTabId)?.sql ?? 'SELECT TOP 10 * FROM account'}
+                            defaultValue={
+                                queryTabs.find((t) => t.id === activeQueryTabId)?.sql ?? 'SELECT TOP 10 * FROM account'
+                            }
                         />
                     </div>
 
                     {/* Tab bar */}
-                    <div className={`flex items-center gap-0 border-b shrink-0 px-2 ${isDark ? 'border-neutral-700 bg-neutral-900' : 'border-gray-200 bg-gray-50'}`}>
+                    <div
+                        className={`flex items-center gap-0 border-b shrink-0 px-2 ${isDark ? 'border-neutral-700 bg-neutral-900' : 'border-gray-200 bg-gray-50'}`}
+                    >
                         {(
                             [
                                 { id: 'results', label: 'Results' },
@@ -561,7 +607,9 @@ export default function App() {
                             >
                                 {tab.label}
                                 {tab.id === 'results' && activeTabResults.rowCount != null && (
-                                    <span className={`ml-1.5 ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>({activeTabResults.rowCount})</span>
+                                    <span className={`ml-1.5 ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>
+                                        ({activeTabResults.rowCount})
+                                    </span>
                                 )}
                             </button>
                         ))}
@@ -604,34 +652,77 @@ export default function App() {
 
                                 {/* DML executing spinner (before progress kicks in) */}
                                 {dml.isExecuting && !dml.progress && !dml.confirmationNeeded ? (
-                                    <div className={`flex h-full items-center justify-center gap-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                                        <svg className="animate-spin h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                    <div
+                                        className={`flex h-full items-center justify-center gap-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
+                                    >
+                                        <svg
+                                            className="animate-spin h-4 w-4 text-gray-400"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <circle
+                                                className="opacity-25"
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                                stroke="currentColor"
+                                                strokeWidth="4"
+                                            />
+                                            <path
+                                                className="opacity-75"
+                                                fill="currentColor"
+                                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                            />
                                         </svg>
                                         Executing…
                                     </div>
                                 ) : activeTabResults.dmlError ? (
                                     /* DML error */
                                     <div className="p-4">
-                                        <div className={`rounded-md border p-3 ${isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'}`}>
-                                            <p className={`text-sm font-medium mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>DML error</p>
-                                            <p className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}>{activeTabResults.dmlError}</p>
+                                        <div
+                                            className={`rounded-md border p-3 ${isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'}`}
+                                        >
+                                            <p
+                                                className={`text-sm font-medium mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}
+                                            >
+                                                DML error
+                                            </p>
+                                            <p
+                                                className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}
+                                            >
+                                                {activeTabResults.dmlError}
+                                            </p>
                                         </div>
                                     </div>
                                 ) : activeTabResults.dmlResult ? (
                                     /* DML success card */
                                     <div className="p-4">
-                                        <div className={`rounded-md border p-4 ${isDark ? 'bg-green-950/30 border-green-800/50' : 'bg-green-50 border-green-200'}`}>
+                                        <div
+                                            className={`rounded-md border p-4 ${isDark ? 'bg-green-950/30 border-green-800/50' : 'bg-green-50 border-green-200'}`}
+                                        >
                                             <div className="flex items-center gap-2 mb-2">
-                                                <svg className={`h-4 w-4 shrink-0 ${isDark ? 'text-green-400' : 'text-green-600'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                <svg
+                                                    className={`h-4 w-4 shrink-0 ${isDark ? 'text-green-400' : 'text-green-600'}`}
+                                                    fill="none"
+                                                    viewBox="0 0 24 24"
+                                                    stroke="currentColor"
+                                                    strokeWidth={2}
+                                                >
+                                                    <path
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                                                    />
                                                 </svg>
-                                                <p className={`text-sm font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}>
+                                                <p
+                                                    className={`text-sm font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}
+                                                >
                                                     {activeTabResults.dmlResult!.operation} successful
                                                 </p>
                                             </div>
-                                            <dl className={`text-xs space-y-1 ${isDark ? 'text-green-300' : 'text-green-700'}`}>
+                                            <dl
+                                                className={`text-xs space-y-1 ${isDark ? 'text-green-300' : 'text-green-700'}`}
+                                            >
                                                 <div className="flex gap-2">
                                                     <dt className="font-medium">Records affected:</dt>
                                                     <dd>{activeTabResults.dmlResult!.affectedCount}</dd>
@@ -640,18 +731,29 @@ export default function App() {
                                                     <dt className="font-medium">Execution time:</dt>
                                                     <dd>{activeTabResults.dmlResult!.executionTime}ms</dd>
                                                 </div>
-                                                {activeTabResults.dmlResult!.createdIds && activeTabResults.dmlResult!.createdIds.length > 0 && (
-                                                    <div className="flex gap-2">
-                                                        <dt className="font-medium">Created ID{activeTabResults.dmlResult!.createdIds.length > 1 ? 's' : ''}:</dt>
-                                                        <dd className="font-mono break-all">{activeTabResults.dmlResult!.createdIds.join(', ')}</dd>
-                                                    </div>
-                                                )}
+                                                {activeTabResults.dmlResult!.createdIds &&
+                                                    activeTabResults.dmlResult!.createdIds.length > 0 && (
+                                                        <div className="flex gap-2">
+                                                            <dt className="font-medium">
+                                                                Created ID
+                                                                {activeTabResults.dmlResult!.createdIds.length > 1
+                                                                    ? 's'
+                                                                    : ''}
+                                                                :
+                                                            </dt>
+                                                            <dd className="font-mono break-all">
+                                                                {activeTabResults.dmlResult!.createdIds.join(', ')}
+                                                            </dd>
+                                                        </div>
+                                                    )}
                                             </dl>
                                         </div>
                                     </div>
                                 ) : queryExec.isExecuting && !activeTabResults.results ? (
                                     /* SELECT executing spinner */
-                                    <div className={`flex h-full items-center justify-center gap-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                                    <div
+                                        className={`flex h-full items-center justify-center gap-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
+                                    >
                                         <svg
                                             className="animate-spin h-4 w-4 text-gray-400"
                                             fill="none"
@@ -675,9 +777,19 @@ export default function App() {
                                     </div>
                                 ) : activeTabResults.error ? (
                                     <div className="p-4">
-                                        <div className={`rounded-md border p-3 ${isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'}`}>
-                                            <p className={`text-sm font-medium mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>Query error</p>
-                                            <p className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}>{activeTabResults.error}</p>
+                                        <div
+                                            className={`rounded-md border p-3 ${isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'}`}
+                                        >
+                                            <p
+                                                className={`text-sm font-medium mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}
+                                            >
+                                                Query error
+                                            </p>
+                                            <p
+                                                className={`text-xs font-mono whitespace-pre-wrap ${isDark ? 'text-red-300' : 'text-red-600'}`}
+                                            >
+                                                {activeTabResults.error}
+                                            </p>
                                         </div>
                                     </div>
                                 ) : activeTabResults.results ? (
@@ -692,7 +804,9 @@ export default function App() {
                                     />
                                 ) : (
                                     <div className="flex h-full items-center justify-center">
-                                        <p className={`text-sm select-none ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                                        <p
+                                            className={`text-sm select-none ${isDark ? 'text-gray-500' : 'text-gray-400'}`}
+                                        >
                                             Run a query to see results
                                         </p>
                                     </div>
@@ -735,11 +849,7 @@ export default function App() {
             )}
 
             {/* Settings panel */}
-            <SettingsPanel
-                isOpen={settingsOpen}
-                onClose={() => setSettingsOpen(false)}
-                isDark={isDark}
-            />
+            <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} isDark={isDark} />
         </div>
     );
 }

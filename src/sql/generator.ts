@@ -29,22 +29,26 @@ function literalToString(value: LiteralValue): string {
 // ── Negate a comparison operator (for NOT pushdown) ──
 
 const NEGATE_OP: Record<string, string> = {
-    'eq': 'neq', 'neq': 'eq',
-    'lt': 'ge',  'ge': 'lt',
-    'gt': 'le',  'le': 'gt',
-    'like': 'not-like', 'not-like': 'like',
+    eq: 'neq',
+    neq: 'eq',
+    lt: 'ge',
+    ge: 'lt',
+    gt: 'le',
+    le: 'gt',
+    like: 'not-like',
+    'not-like': 'like',
 };
 
 // ── SQL operator → FetchXML operator ──
 
 const OP_MAP: Record<string, string> = {
-    '=':    'eq',
-    '!=':   'neq',
-    '<':    'lt',
-    '>':    'gt',
-    '<=':   'le',
-    '>=':   'ge',
-    'LIKE': 'like',
+    '=': 'eq',
+    '!=': 'neq',
+    '<': 'lt',
+    '>': 'gt',
+    '<=': 'le',
+    '>=': 'ge',
+    LIKE: 'like',
 };
 
 // ── Resolve the left side of a comparison for condition generation ──
@@ -93,7 +97,8 @@ function generateCondition(expr: WhereExpr, indent: string, aggregateAliasMap?: 
             if (right !== null && typeof right === 'object' && 'column' in right) {
                 throw new SqlParseError(
                     `Column-to-column comparison in WHERE/HAVING is not supported in FetchXML`,
-                    0, 0,
+                    0,
+                    0,
                 );
             }
 
@@ -136,11 +141,12 @@ function generateCondition(expr: WhereExpr, indent: string, aggregateAliasMap?: 
             const entityAttr = expr.column.table ? ` entityname="${xmlEscape(expr.column.table)}"` : '';
             const op = expr.negated ? 'not-in' : 'in';
             const values = expr.values
-                .map(v => `${indent}  <value>${xmlEscape(literalToString(v))}</value>`)
+                .map((v) => `${indent}  <value>${xmlEscape(literalToString(v))}</value>`)
                 .join('\n');
             return (
                 `${indent}<condition attribute="${attr}"${entityAttr} operator="${op}">\n` +
-                values + '\n' +
+                values +
+                '\n' +
                 `${indent}</condition>`
             );
         }
@@ -150,12 +156,7 @@ function generateCondition(expr: WhereExpr, indent: string, aggregateAliasMap?: 
             const type = expr.kind;
             const left = generateCondition(expr.left, indent + '  ', aggregateAliasMap);
             const right = generateCondition(expr.right, indent + '  ', aggregateAliasMap);
-            return (
-                `${indent}<filter type="${type}">\n` +
-                left + '\n' +
-                right + '\n' +
-                `${indent}</filter>`
-            );
+            return `${indent}<filter type="${type}">\n` + left + '\n' + right + '\n' + `${indent}</filter>`;
         }
 
         case 'not': {
@@ -186,7 +187,8 @@ function generateNegated(expr: WhereExpr, indent: string, aggregateAliasMap?: Ma
             if (right !== null && typeof right === 'object' && 'column' in right) {
                 throw new SqlParseError(
                     `Column-to-column comparison in WHERE/HAVING is not supported in FetchXML`,
-                    0, 0,
+                    0,
+                    0,
                 );
             }
 
@@ -230,11 +232,12 @@ function generateNegated(expr: WhereExpr, indent: string, aggregateAliasMap?: Ma
             const entityAttr = expr.column.table ? ` entityname="${xmlEscape(expr.column.table)}"` : '';
             const op = expr.negated ? 'in' : 'not-in'; // flip
             const values = expr.values
-                .map(v => `${indent}  <value>${xmlEscape(literalToString(v))}</value>`)
+                .map((v) => `${indent}  <value>${xmlEscape(literalToString(v))}</value>`)
                 .join('\n');
             return (
                 `${indent}<condition attribute="${attr}"${entityAttr} operator="${op}">\n` +
-                values + '\n' +
+                values +
+                '\n' +
                 `${indent}</condition>`
             );
         }
@@ -245,12 +248,7 @@ function generateNegated(expr: WhereExpr, indent: string, aggregateAliasMap?: Ma
             const flippedType = expr.kind === 'and' ? 'or' : 'and';
             const left = generateNegated(expr.left, indent + '  ', aggregateAliasMap);
             const right = generateNegated(expr.right, indent + '  ', aggregateAliasMap);
-            return (
-                `${indent}<filter type="${flippedType}">\n` +
-                left + '\n' +
-                right + '\n' +
-                `${indent}</filter>`
-            );
+            return `${indent}<filter type="${flippedType}">\n` + left + '\n' + right + '\n' + `${indent}</filter>`;
         }
 
         case 'not': {
@@ -263,9 +261,7 @@ function generateNegated(expr: WhereExpr, indent: string, aggregateAliasMap?: Ma
 // ── Build a stable key for matching aggregates ──
 
 function aggregateKey(agg: AggregateExpr): string {
-    const col = agg.column.table
-        ? `${agg.column.table}.${agg.column.column}`
-        : agg.column.column;
+    const col = agg.column.table ? `${agg.column.table}.${agg.column.column}` : agg.column.column;
     return `${agg.function.toLowerCase()}(${col})`;
 }
 
@@ -299,7 +295,8 @@ function generateAttributeLine(
     }
     const name = xmlEscape(col.column);
     const alias = col.alias ? ` alias="${xmlEscape(col.alias)}"` : '';
-    const isGroupBy = groupByColumns.has(col.column) || (col.table ? groupByColumns.has(`${col.table}.${col.column}`) : false);
+    const isGroupBy =
+        groupByColumns.has(col.column) || (col.table ? groupByColumns.has(`${col.table}.${col.column}`) : false);
     const groupby = isGroupBy ? ` groupby="true"` : '';
     return `${indent}<attribute name="${name}"${groupby}${alias} />`;
 }
@@ -339,9 +336,7 @@ export function generateFetchXml(ast: SelectStatement): string {
     if (ast.distinct && !hasAggregate) fetchAttrs.push(`distinct="true"`);
     // aggregate="true" is set when any aggregate function appears in the SELECT list
     if (hasAggregate) fetchAttrs.push(`aggregate="true"`);
-    const fetchOpen = fetchAttrs.length > 0
-        ? `<fetch ${fetchAttrs.join(' ')}>`
-        : `<fetch>`;
+    const fetchOpen = fetchAttrs.length > 0 ? `<fetch ${fetchAttrs.join(' ')}>` : `<fetch>`;
 
     lines.push(fetchOpen);
 
@@ -380,7 +375,9 @@ export function generateFetchXml(ast: SelectStatement): string {
     }
 
     // Check if we have a wildcard — if so, emit <all-attributes />
-    const hasWildcard = mainColumns.some(c => !isAggregateExpr(c) && (c as ColumnRef).column === '*' && !(c as ColumnRef).table);
+    const hasWildcard = mainColumns.some(
+        (c) => !isAggregateExpr(c) && (c as ColumnRef).column === '*' && !(c as ColumnRef).table,
+    );
 
     if (hasWildcard) {
         lines.push(`    <all-attributes />`);
@@ -402,7 +399,8 @@ export function generateFetchXml(ast: SelectStatement): string {
         if (join.type === 'RIGHT') {
             throw new SqlParseError(
                 'RIGHT JOIN is not supported in FetchXML. Restructure the query to use LEFT JOIN instead.',
-                0, 0,
+                0,
+                0,
             );
         }
 
@@ -427,12 +425,12 @@ export function generateFetchXml(ast: SelectStatement): string {
                 const joinTableOrAlias = join.alias ?? join.table;
                 if (rRef.table && (rRef.table === join.table || rRef.table === joinTableOrAlias)) {
                     // Right side is the joined entity
-                    fromAttr = rRef.column;         // link-entity's attribute
-                    toAttr = leftCol.column;         // parent entity's attribute
+                    fromAttr = rRef.column; // link-entity's attribute
+                    toAttr = leftCol.column; // parent entity's attribute
                 } else if (leftCol.table && (leftCol.table === join.table || leftCol.table === joinTableOrAlias)) {
                     // Left side is the joined entity
-                    fromAttr = leftCol.column;       // link-entity's attribute
-                    toAttr = rRef.column;            // parent entity's attribute
+                    fromAttr = leftCol.column; // link-entity's attribute
+                    toAttr = rRef.column; // parent entity's attribute
                 } else {
                     // Fallback: assume left is parent, right is link-entity
                     toAttr = leftCol.column;
@@ -446,7 +444,7 @@ export function generateFetchXml(ast: SelectStatement): string {
 
         // Columns belonging to this join
         const joinCols = joinColumnMap.get(joinRef) ?? [];
-        const joinHasWildcard = joinCols.some(c => !isAggregateExpr(c) && (c as ColumnRef).column === '*');
+        const joinHasWildcard = joinCols.some((c) => !isAggregateExpr(c) && (c as ColumnRef).column === '*');
 
         if (joinCols.length === 0) {
             lines.push(`    <link-entity name="${name}"${fromPart}${toPart} link-type="${linkType}"${alias} />`);
@@ -491,14 +489,12 @@ export function generateFetchXml(ast: SelectStatement): string {
     // ORDER BY
     if (ast.orderBy) {
         // Build a set of known join aliases/tables for entityname resolution
-        const joinAliasSet = new Set(ast.joins.map(j => j.alias ?? j.table));
+        const joinAliasSet = new Set(ast.joins.map((j) => j.alias ?? j.table));
         for (const item of ast.orderBy) {
             const attr = xmlEscape(item.column.column);
             const tableRef = item.column.table;
             // If ordering by a column from a joined entity, emit entityname attribute
-            const entitynamePart = (tableRef && joinAliasSet.has(tableRef))
-                ? ` entityname="${xmlEscape(tableRef)}"`
-                : '';
+            const entitynamePart = tableRef && joinAliasSet.has(tableRef) ? ` entityname="${xmlEscape(tableRef)}"` : '';
             if (item.direction === 'DESC') {
                 lines.push(`    <order attribute="${attr}"${entitynamePart} descending="true" />`);
             } else {

@@ -17,12 +17,7 @@ export function DmlProgress({ progress, onCancel, isDark = false }: DmlProgressP
         : 'bg-white border-gray-200 text-gray-900';
     const subtextClass = isDark ? 'text-neutral-400' : 'text-gray-500';
     const trackClass = isDark ? 'bg-neutral-700' : 'bg-gray-200';
-    const barColor =
-        operation === 'DELETE'
-            ? 'bg-red-500'
-            : operation === 'UPDATE'
-              ? 'bg-yellow-500'
-              : 'bg-indigo-500';
+    const barColor = operation === 'DELETE' ? 'bg-red-500' : operation === 'UPDATE' ? 'bg-yellow-500' : 'bg-indigo-500';
 
     return (
         <div className={`rounded-lg border shadow-sm p-4 ${containerClass}`}>
@@ -49,9 +44,7 @@ export function DmlProgress({ progress, onCancel, isDark = false }: DmlProgressP
                             />
                         </svg>
                     )}
-                    <span className="text-sm font-medium">
-                        {cancelled ? 'Cancelled' : `${operationLabel}ing…`}
-                    </span>
+                    <span className="text-sm font-medium">{cancelled ? 'Cancelled' : `${operationLabel}ing…`}</span>
                 </div>
                 <span className={`text-xs font-mono ${subtextClass}`}>
                     {completed}/{total} ({pct}%)
