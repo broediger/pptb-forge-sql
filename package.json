@@ -2,9 +2,9 @@
     "name": "pptb-forge-sql",
     "version": "0.1.0",
     "displayName": "Forge SQL",
-    "description": "Write and execute SQL against Dataverse — SELECT, INSERT, UPDATE, and DELETE. Translates to FetchXML and Web API calls, with   ",
+    "description": "Write and execute SQL against Dataverse — SELECT, INSERT, UPDATE, and DELETE. Translates to FetchXML and Web API calls.",
     "main": "index.html",
-    "icon": "src/assets/icon.svg",
+    "icon": "icon.svg",
     "author": "Björn Rödiger <bjoern@roediger.dev>",
     "license": "MIT",
     "contributors": [
@@ -15,7 +15,11 @@
     ],
     "configurations": {
         "repository": "https://github.com/broediger/pptb-forge-sql",
-        "readmeUrl": "https://raw.githubusercontent.com/broediger/pptb-forge-sql/main/README.md"
+        "readmeUrl": "https://raw.githubusercontent.com/broediger/pptb-forge-sql/refs/heads/main/README.md"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/broediger/pptb-forge-sql.git"
     },
     "engines": {
         "node": ">=18.0.0"
@@ -36,7 +40,6 @@
     },
     "dependencies": {
         "@monaco-editor/react": "^4.7.0",
-        "@tailwindcss/vite": "^4.2.2",
         "@tanstack/react-table": "^8.21.3",
         "@tanstack/react-virtual": "^3.13.23",
         "monaco-editor": "^0.55.1",
@@ -47,6 +50,7 @@
     },
     "devDependencies": {
         "@eslint/js": "^9.39.4",
+        "@tailwindcss/vite": "^4.2.2",
         "@pptb/types": "^1.2.0",
         "@types/react": "^18.3.12",
         "@types/react-dom": "^18.3.1",
@@ -61,6 +65,7 @@
     },
     "files": [
         "dist",
+        "icon.svg",
         "npm-shrinkwrap.json"
     ]
 }
