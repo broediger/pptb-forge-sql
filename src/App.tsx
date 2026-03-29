@@ -332,6 +332,43 @@ export default function App() {
         exportToJson(activeTabResults.results);
     }, [activeTabResults.results]);
 
+    const handleSaveQuery = useCallback(async () => {
+        const sql = editorRef.current?.getValue() ?? '';
+        if (!sql.trim()) return;
+        try {
+            const activeTab = queryTabs.find((t) => t.id === activeQueryTabId);
+            const defaultName = (activeTab?.label ?? 'query') + '.sql';
+            await window.toolboxAPI.fileSystem.saveFile(defaultName, sql, [
+                { name: 'SQL Files', extensions: ['sql'] },
+                { name: 'All Files', extensions: ['*'] },
+            ]);
+        } catch {
+            // fileSystem API may not be available in dev mode
+        }
+    }, [queryTabs, activeQueryTabId]);
+
+    const handleOpenQuery = useCallback(async () => {
+        try {
+            const path = await window.toolboxAPI.fileSystem.selectPath({
+                type: 'file',
+                title: 'Open SQL Query',
+                filters: [
+                    { name: 'SQL Files', extensions: ['sql'] },
+                    { name: 'All Files', extensions: ['*'] },
+                ],
+            });
+            if (!path) return;
+            const content = await window.toolboxAPI.fileSystem.readText(path);
+            editorRef.current?.setValue(content);
+            const filename = path.split(/[/\\]/).pop()?.replace(/\.sql$/i, '') ?? 'Query';
+            setQueryTabs((prev) =>
+                prev.map((t) => (t.id === activeQueryTabId ? { ...t, label: filename, sql: content } : t)),
+            );
+        } catch {
+            // fileSystem API may not be available in dev mode
+        }
+    }, [activeQueryTabId]);
+
     // Connection status indicator
     const isConnected = !connectionLoading && connection != null;
     const connectionName = connection?.name ?? connection?.url ?? null;
@@ -574,6 +611,8 @@ export default function App() {
                     <div className={`shrink-0 border-b ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
                         <SqlEditor
                             onExecute={handleExecute}
+                            onSave={handleSaveQuery}
+                            onOpen={handleOpenQuery}
                             editorRef={editorRef}
                             theme={theme}
                             defaultValue={

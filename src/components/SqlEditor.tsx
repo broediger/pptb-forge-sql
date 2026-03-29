@@ -9,6 +9,8 @@ let completionProviderRegistered = false;
 
 interface SqlEditorProps {
     onExecute: (sql: string) => void;
+    onSave?: () => void;
+    onOpen?: () => void;
     defaultValue?: string;
     editorRef?: React.MutableRefObject<MonacoType.editor.IStandaloneCodeEditor | null>;
     theme?: 'light' | 'dark';
@@ -16,6 +18,8 @@ interface SqlEditorProps {
 
 export function SqlEditor({
     onExecute,
+    onSave,
+    onOpen,
     defaultValue = 'SELECT TOP 10 * FROM account',
     editorRef: externalEditorRef,
     theme,
@@ -28,6 +32,16 @@ export function SqlEditor({
     useEffect(() => {
         onExecuteRef.current = onExecute;
     }, [onExecute]);
+
+    const onSaveRef = useRef(onSave);
+    useEffect(() => {
+        onSaveRef.current = onSave;
+    }, [onSave]);
+
+    const onOpenRef = useRef(onOpen);
+    useEffect(() => {
+        onOpenRef.current = onOpen;
+    }, [onOpen]);
 
     const handleExecute = useCallback(() => {
         const value = internalEditorRef.current?.getValue() ?? '';
@@ -50,6 +64,16 @@ export function SqlEditor({
             const value = editor.getValue();
             onExecuteRef.current(value);
         });
+
+        // Ctrl/Cmd+S → Save query
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            onSaveRef.current?.();
+        });
+
+        // Ctrl/Cmd+O → Open query
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, () => {
+            onOpenRef.current?.();
+        });
     };
 
     return (
@@ -65,7 +89,43 @@ export function SqlEditor({
                     <span className="text-base leading-none">▶</span>
                     <span>Run</span>
                 </button>
-                <span className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                <div className="h-4 w-px bg-gray-600/50" />
+
+                {onOpen && (
+                    <button
+                        onClick={onOpen}
+                        className={`flex items-center gap-1 px-2 py-1.5 text-xs rounded transition-colors ${
+                            theme === 'dark'
+                                ? 'text-gray-300 hover:bg-gray-700 hover:text-gray-100'
+                                : 'text-gray-600 hover:bg-gray-300 hover:text-gray-800'
+                        }`}
+                        title="Open query (Ctrl+O / Cmd+O)"
+                    >
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" />
+                        </svg>
+                        Open
+                    </button>
+                )}
+
+                {onSave && (
+                    <button
+                        onClick={onSave}
+                        className={`flex items-center gap-1 px-2 py-1.5 text-xs rounded transition-colors ${
+                            theme === 'dark'
+                                ? 'text-gray-300 hover:bg-gray-700 hover:text-gray-100'
+                                : 'text-gray-600 hover:bg-gray-300 hover:text-gray-800'
+                        }`}
+                        title="Save query (Ctrl+S / Cmd+S)"
+                    >
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                        </svg>
+                        Save
+                    </button>
+                )}
+
+                <span className={`text-xs ml-auto ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
                     Ctrl+Enter to execute
                 </span>
             </div>
