@@ -280,6 +280,7 @@ export default function App() {
                 statementType: 'SELECT',
             });
         },
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         [queryExec.execute, addEntry, dml, activeQueryTabId]
     );
 

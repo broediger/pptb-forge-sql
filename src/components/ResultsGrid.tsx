@@ -159,6 +159,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
         [columns],
     );
 
+    // eslint-disable-next-line react-hooks/incompatible-library
     const table = useReactTable({
         data,
         columns: columnDefs,

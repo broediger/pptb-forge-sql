@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type * as MonacoType from 'monaco-editor';
 import { createSqlCompletionProvider } from '../sql/completionProvider';
@@ -21,20 +21,20 @@ export function SqlEditor({
     theme,
 }: SqlEditorProps) {
     const internalEditorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
-    const editorRef = externalEditorRef ?? internalEditorRef;
 
     // Keep a ref to the latest onExecute callback so the Ctrl+Enter keybinding
     // registered on mount always calls the current prop (Bug 4).
     const onExecuteRef = useRef(onExecute);
-    onExecuteRef.current = onExecute;
+    useEffect(() => { onExecuteRef.current = onExecute; }, [onExecute]);
 
     const handleExecute = useCallback(() => {
-        const value = editorRef.current?.getValue() ?? '';
+        const value = internalEditorRef.current?.getValue() ?? '';
         onExecuteRef.current(value);
-    }, [editorRef]);
+    }, []);
 
     const handleMount: OnMount = (editor, monaco) => {
-        editorRef.current = editor;
+        internalEditorRef.current = editor;
+        if (externalEditorRef) externalEditorRef.current = editor;
 
         // Only register the completion provider once to avoid duplicates on remount (Bug 6).
         if (!completionProviderRegistered) {
