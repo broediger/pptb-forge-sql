@@ -47,7 +47,19 @@ interface QueryTab {
     id: string;
     label: string;
     sql: string;
+    color?: string;
 }
+
+const TAB_COLORS = [
+    { name: 'Default', value: '', swatch: 'bg-indigo-500' },
+    { name: 'Red', value: 'border-red-500', swatch: 'bg-red-500' },
+    { name: 'Orange', value: 'border-orange-500', swatch: 'bg-orange-500' },
+    { name: 'Yellow', value: 'border-yellow-500', swatch: 'bg-yellow-500' },
+    { name: 'Green', value: 'border-green-500', swatch: 'bg-green-500' },
+    { name: 'Blue', value: 'border-blue-500', swatch: 'bg-blue-500' },
+    { name: 'Purple', value: 'border-purple-500', swatch: 'bg-purple-500' },
+    { name: 'Pink', value: 'border-pink-500', swatch: 'bg-pink-500' },
+];
 
 export default function App() {
     const [activeTab, setActiveTab] = useState<ActiveTab>('results');
@@ -62,6 +74,7 @@ export default function App() {
     const [nextTabNum, setNextTabNum] = useState<number>(2);
     const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState<string>('');
+    const [contextMenu, setContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
 
     const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
     const pendingDmlSqlRef = useRef<string>('');
@@ -495,16 +508,16 @@ export default function App() {
                         }`}
                         style={{ scrollbarWidth: 'none' }}
                     >
-                        {queryTabs.map((tab) => (
+                        {queryTabs.map((tab) => {
+                            const activeColor = tab.color || (isDark ? 'border-indigo-500' : 'border-indigo-500');
+                            return (
                             <div
                                 key={tab.id}
                                 className={[
                                     'group flex items-center gap-1 shrink-0 border-b-2 cursor-pointer select-none transition-colors',
                                     'text-xs px-3 py-1.5',
                                     activeQueryTabId === tab.id
-                                        ? isDark
-                                            ? 'border-indigo-500 text-indigo-400 bg-neutral-800'
-                                            : 'border-indigo-500 text-indigo-600 bg-white'
+                                        ? `${activeColor} ${isDark ? 'text-indigo-400 bg-neutral-800' : 'text-indigo-600 bg-white'}`
                                         : isDark
                                           ? 'border-transparent text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
                                           : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-200/60',
@@ -517,6 +530,10 @@ export default function App() {
                                 onDoubleClick={() => {
                                     setRenamingTabId(tab.id);
                                     setRenameValue(tab.label);
+                                }}
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
                                 }}
                             >
                                 {renamingTabId === tab.id ? (
@@ -550,7 +567,12 @@ export default function App() {
                                         }`}
                                     />
                                 ) : (
-                                    <span>{tab.label}</span>
+                                    <span className="flex items-center gap-1.5">
+                                        {tab.color && activeQueryTabId !== tab.id && (
+                                            <span className={`h-2 w-2 rounded-full shrink-0 ${TAB_COLORS.find((c) => c.value === tab.color)?.swatch ?? ''}`} />
+                                        )}
+                                        {tab.label}
+                                    </span>
                                 )}
                                 {queryTabs.length > 1 && (
                                     <button
@@ -582,7 +604,8 @@ export default function App() {
                                     </button>
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
 
                         {/* Add new tab button */}
                         <button
@@ -889,6 +912,88 @@ export default function App() {
 
             {/* Settings panel */}
             <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} isDark={isDark} />
+
+            {/* Tab context menu */}
+            {contextMenu && (
+                <>
+                    {/* Backdrop to dismiss */}
+                    <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
+                    <div
+                        className={`fixed z-50 rounded-md border shadow-lg py-1 min-w-[160px] ${
+                            isDark ? 'bg-neutral-800 border-neutral-600 text-neutral-200' : 'bg-white border-gray-200 text-gray-700'
+                        }`}
+                        style={{ top: contextMenu.y, left: contextMenu.x }}
+                    >
+                        {/* Rename */}
+                        <button
+                            className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                                isDark ? 'hover:bg-neutral-700' : 'hover:bg-gray-100'
+                            }`}
+                            onClick={() => {
+                                const tab = queryTabs.find((t) => t.id === contextMenu.tabId);
+                                if (tab) {
+                                    setRenamingTabId(tab.id);
+                                    setRenameValue(tab.label);
+                                }
+                                setContextMenu(null);
+                            }}
+                        >
+                            Rename
+                        </button>
+
+                        {/* Divider */}
+                        <div className={`my-1 h-px ${isDark ? 'bg-neutral-700' : 'bg-gray-200'}`} />
+
+                        {/* Tab color */}
+                        <div className={`px-3 py-1.5 text-xs ${isDark ? 'text-neutral-400' : 'text-gray-500'}`}>
+                            Tab Color
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 px-3 py-1">
+                            {TAB_COLORS.map((c) => {
+                                const currentTab = queryTabs.find((t) => t.id === contextMenu.tabId);
+                                const isActive = (currentTab?.color ?? '') === c.value;
+                                return (
+                                    <button
+                                        key={c.name}
+                                        className={`h-4 w-4 rounded-full border-2 transition-transform hover:scale-125 ${c.swatch} ${
+                                            isActive
+                                                ? 'border-white ring-1 ring-offset-1 ring-offset-transparent ring-white/50 scale-110'
+                                                : isDark ? 'border-neutral-600' : 'border-gray-300'
+                                        }`}
+                                        title={c.name}
+                                        onClick={() => {
+                                            setQueryTabs((prev) =>
+                                                prev.map((t) =>
+                                                    t.id === contextMenu.tabId ? { ...t, color: c.value } : t,
+                                                ),
+                                            );
+                                            setContextMenu(null);
+                                        }}
+                                    />
+                                );
+                            })}
+                        </div>
+
+                        {/* Divider + Close */}
+                        {queryTabs.length > 1 && (
+                            <>
+                                <div className={`my-1 h-px ${isDark ? 'bg-neutral-700' : 'bg-gray-200'}`} />
+                                <button
+                                    className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                                        isDark ? 'hover:bg-neutral-700 text-red-400' : 'hover:bg-gray-100 text-red-600'
+                                    }`}
+                                    onClick={() => {
+                                        closeQueryTab(contextMenu.tabId);
+                                        setContextMenu(null);
+                                    }}
+                                >
+                                    Close Tab
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     );
 }
