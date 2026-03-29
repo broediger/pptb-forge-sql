@@ -37,6 +37,12 @@ const SQL_KEYWORDS = [
     'AVG',
     'MIN',
     'MAX',
+    'INSERT',
+    'INTO',
+    'VALUES',
+    'UPDATE',
+    'SET',
+    'DELETE',
 ];
 
 /** Extract the primary table name from a FROM clause in SQL text. */
@@ -45,23 +51,26 @@ function extractFromTableName(sqlText: string): string | null {
     return match ? match[1] : null;
 }
 
+/** Extract all table aliases: { alias → tableName } from "FROM table alias" and "JOIN table alias" */
+function extractAliases(sqlText: string): Map<string, string> {
+    const map = new Map<string, string>();
+    // Match FROM/JOIN table [AS] alias patterns
+    const re = /\b(?:FROM|JOIN)\s+(\w+)\s+(?:AS\s+)?(\w+)/gi;
+    let m;
+    while ((m = re.exec(sqlText)) !== null) {
+        map.set(m[2].toLowerCase(), m[1].toLowerCase());
+    }
+    return map;
+}
+
 /**
  * Returns true when the cursor is in a position where attribute/column names
- * are appropriate: SELECT list, after WHERE, ON, ORDER BY, GROUP BY.
+ * are appropriate: SELECT list, after WHERE, ON, ORDER BY, GROUP BY, SET.
  */
 function isColumnContext(linePrefix: string): boolean {
-    // After ORDER BY or GROUP BY (with optional trailing words/commas)
-    if (/\b(?:ORDER\s+BY|GROUP\s+BY)[\w\s,.*]*$/i.test(linePrefix)) {
-        return true;
-    }
-    // After WHERE or ON with any trailing expression text
-    if (/\b(?:WHERE|ON)\b.*$/i.test(linePrefix)) {
-        return true;
-    }
-    // After SELECT (including trailing words, commas, spaces, * and .)
-    if (/\bSELECT\b[\w\s,.*]*$/i.test(linePrefix)) {
-        return true;
-    }
+    if (/\b(?:ORDER\s+BY|GROUP\s+BY)[\w\s,.*]*$/i.test(linePrefix)) return true;
+    if (/\b(?:WHERE|ON|SET)\b.*$/i.test(linePrefix)) return true;
+    if (/\bSELECT\b[\w\s,.*]*$/i.test(linePrefix)) return true;
     return false;
 }
 
@@ -73,8 +82,19 @@ function isTableContext(linePrefix: string): boolean {
     return /\b(?:FROM|JOIN)\s+\w*$/i.test(linePrefix);
 }
 
+/**
+ * Check if cursor is right after a dot (e.g. "account." or "a.na")
+ * Returns the prefix before the dot if so, otherwise null.
+ */
+function getDotPrefix(linePrefix: string): string | null {
+    const match = linePrefix.match(/\b(\w+)\.\w*$/);
+    return match ? match[1] : null;
+}
+
 export function createSqlCompletionProvider(): monaco.languages.CompletionItemProvider {
     return {
+        triggerCharacters: ['.', ' '],
+
         provideCompletionItems(
             model: monaco.editor.ITextModel,
             position: monaco.Position,
@@ -87,10 +107,9 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
                 endColumn: position.column,
             };
 
-            // Text before the cursor on the current line
             const linePrefix = model.getLineContent(position.lineNumber).substring(0, position.column - 1);
 
-            // Full SQL text before the cursor for FROM clause detection
+            const fullText = model.getValue();
             const fullTextBeforeCursor = model.getValueInRange({
                 startLineNumber: 1,
                 startColumn: 1,
@@ -99,6 +118,32 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
             });
 
             const store = useSchemaStore.getState();
+
+            // ── Dot context: "account." or "a." → suggest attributes ─────────
+            const dotPrefix = getDotPrefix(linePrefix);
+            if (dotPrefix) {
+                // Resolve the prefix: could be a table name or an alias
+                const aliases = extractAliases(fullText);
+                const resolvedTable = aliases.get(dotPrefix.toLowerCase()) ?? dotPrefix.toLowerCase();
+
+                // Load attributes if not cached
+                void store.loadAttributes(resolvedTable);
+                const attrs = store.attributes.get(resolvedTable);
+
+                if (attrs && attrs.length > 0) {
+                    const suggestions: monaco.languages.CompletionItem[] = attrs.map((attr) => ({
+                        label: attr.logicalName,
+                        kind: KIND_FIELD,
+                        insertText: attr.logicalName,
+                        detail: `${attr.displayName} (${attr.attributeType})`,
+                        range,
+                    }));
+                    return { suggestions };
+                }
+
+                // Attributes loading — return empty for now, next keystroke will have them
+                return { suggestions: [] };
+            }
 
             // ── Table/entity context: right after FROM or JOIN ────────────────
             if (isTableContext(linePrefix)) {
@@ -112,17 +157,14 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
                 return { suggestions };
             }
 
-            // ── Column/attribute context ──────────────────────────────────────
+            // ── Column/attribute context (no dot prefix) ──────────────────────
             if (isColumnContext(linePrefix)) {
                 const tableName = extractFromTableName(fullTextBeforeCursor);
 
                 if (tableName) {
-                    // Fire-and-forget: load attributes if not yet cached.
-                    // The provider will surface results once available on the
-                    // next trigger (e.g. the next keystroke).
                     void store.loadAttributes(tableName);
-
                     const attrs = store.attributes.get(tableName);
+
                     if (attrs && attrs.length > 0) {
                         const suggestions: monaco.languages.CompletionItem[] = attrs.map((attr) => ({
                             label: attr.logicalName,
@@ -134,8 +176,6 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
                         return { suggestions };
                     }
                 }
-
-                // Attributes not yet loaded — fall through to keyword suggestions
             }
 
             // ── Default: SQL keywords ─────────────────────────────────────────
