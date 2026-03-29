@@ -31,6 +31,7 @@
         "lint:fix": "eslint src/ --fix",
         "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
         "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+        "type-check": "tsc --noEmit",
         "finalize-package": "npm shrinkwrap"
     },
     "dependencies": {
