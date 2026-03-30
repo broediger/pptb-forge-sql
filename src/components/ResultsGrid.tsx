@@ -28,13 +28,20 @@ function isGuid(value: unknown): value is string {
     return typeof value === 'string' && GUID_REGEX.test(value);
 }
 
-// Derive entity logical name from a column name like "accountid" or "_parentcustomerid_value"
-function guessEntityFromColumn(columnName: string): string | null {
-    // Lookup columns: _xxxid_value → xxx
+/**
+ * Resolve the entity logical name for a GUID column. Prefers the _type
+ * annotation from the same row (e.g. _ownerid_value_type = "systemuser")
+ * over guessing from the column name.
+ */
+function resolveEntityName(columnName: string, row: Record<string, unknown>): string | null {
+    // Check for _xxxid_value_type annotation in the row data
     const lookupMatch = columnName.match(/^_(.+)_value$/);
     if (lookupMatch) {
+        const typeKey = `${columnName}_type`;
+        const typeVal = row[typeKey];
+        if (typeof typeVal === 'string' && typeVal) return typeVal;
+        // Fallback: strip "id" suffix
         const ref = lookupMatch[1];
-        // Remove trailing "id" to get entity name
         return ref.endsWith('id') ? ref.slice(0, -2) : ref;
     }
     // Primary key columns: entitynameid → entityname
@@ -254,7 +261,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                         const isNull = isNullish(rawValue);
                                         const colId = cell.column.id;
                                         const guidValue = guidColumns.has(colId) && isGuid(rawValue) ? rawValue : null;
-                                        const entityName = guidValue ? guessEntityFromColumn(colId) : null;
+                                        const entityName = guidValue ? resolveEntityName(colId, row.original) : null;
                                         const canOpenRecord = guidValue && entityName && connectionUrl;
 
                                         return (
