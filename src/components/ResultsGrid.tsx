@@ -110,12 +110,31 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
     const tableContainerRef = useRef<HTMLDivElement>(null);
 
     const openRecord = useCallback(
-        (entityName: string, recordId: string) => {
+        async (entityName: string, recordId: string) => {
             if (!connectionUrl) return;
-            // Dataverse record URL: https://org.crm.dynamics.com/main.aspx?etn=account&id={guid}&pagetype=entityrecord
             const base = connectionUrl.replace(/\/+$/, '');
             const url = `${base}/main.aspx?etn=${encodeURIComponent(entityName)}&id=${encodeURIComponent(recordId)}&pagetype=entityrecord`;
-            window.open(url, '_blank');
+
+            // Open in the system default browser via a hidden PPTB terminal
+            // (window.open stays inside Electron, so we shell out instead)
+            try {
+                const term = await window.toolboxAPI.terminal.create({
+                    name: 'open-url',
+                    visible: false,
+                });
+                // macOS: open, Windows: start, Linux: xdg-open
+                const platform = navigator.platform.toLowerCase();
+                const cmd = platform.includes('win')
+                    ? `start "" "${url}"`
+                    : platform.includes('linux')
+                      ? `xdg-open "${url}"`
+                      : `open "${url}"`;
+                await window.toolboxAPI.terminal.execute(term.id, cmd);
+                await window.toolboxAPI.terminal.close(term.id);
+            } catch {
+                // Fallback if terminal API is unavailable
+                window.open(url, '_blank');
+            }
         },
         [connectionUrl],
     );
