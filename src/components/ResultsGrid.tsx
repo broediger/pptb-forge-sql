@@ -202,7 +202,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                 <table className="text-sm border-collapse" style={{ width: table.getCenterTotalSize() }}>
                     <thead>
                         {table.getHeaderGroups().map((headerGroup) => (
-                            <tr key={headerGroup.id}>
+                            <tr key={headerGroup.id} style={{ display: 'flex', width: table.getCenterTotalSize() }}>
                                 {headerGroup.headers.map((header) => {
                                     const sorted = header.column.getIsSorted();
                                     return (
@@ -213,7 +213,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                                     ? 'bg-gray-800 text-gray-300 border-b border-r border-gray-600'
                                                     : 'bg-gray-100 text-gray-700 border-b border-r border-gray-300'
                                             }`}
-                                            style={{ width: header.getSize() }}
+                                            style={{ flex: 'none', width: header.getSize() }}
                                             onClick={header.column.getToggleSortingHandler()}
                                         >
                                             <span className="flex items-center gap-1">
@@ -237,10 +237,11 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                     data-index={virtualRow.index}
                                     ref={(node) => rowVirtualizer.measureElement(node)}
                                     style={{
+                                        display: 'flex',
                                         position: 'absolute',
                                         top: 0,
                                         left: 0,
-                                        width: '100%',
+                                        width: table.getCenterTotalSize(),
                                         transform: `translateY(${virtualRow.start}px)`,
                                     }}
                                     className={
@@ -265,6 +266,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                                         : 'border-b border-r border-gray-200 text-gray-800'
                                                 }`}
                                                 style={{
+                                                    flex: 'none',
                                                     width: cell.column.getSize(),
                                                     maxWidth: cell.column.getSize(),
                                                 }}

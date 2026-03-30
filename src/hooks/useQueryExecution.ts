@@ -68,34 +68,22 @@ function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
             }
         }
 
-        // Second pass: create friendly aliases for lookups and formatted values
-        for (const [key, value] of Object.entries({ ...cleaned })) {
-            // _xxxid_value → xxxid (GUID alias)
-            const lookupMatch = key.match(/^_(.+)_value$/);
-            if (lookupMatch && !(lookupMatch[1] in cleaned)) {
-                cleaned[lookupMatch[1]] = value;
-            }
-
-            // _xxxid_value_formatted → xxxidname (display name alias)
-            const lookupFmtMatch = key.match(/^_(.+)_value_formatted$/);
-            if (lookupFmtMatch && !(lookupFmtMatch[1] + 'name' in cleaned)) {
-                cleaned[lookupFmtMatch[1] + 'name'] = value;
-            }
-
-            // xxx_formatted → xxxname (option set / general formatted alias)
-            const fmtMatch = key.match(/^(.+)_formatted$/);
-            if (fmtMatch && !key.startsWith('_') && !(fmtMatch[1] + 'name' in cleaned)) {
-                cleaned[fmtMatch[1] + 'name'] = value;
-            }
-        }
-
         return cleaned;
     });
 }
 
-function extractColumns(rows: Record<string, unknown>[]): string[] {
+/**
+ * Extract columns for display. When isSelectStar is true, hide the
+ * derived alias columns (_formatted, _type, _nav, xxxname from lookups)
+ * to reduce noise — users can request them explicitly if needed.
+ */
+function extractColumns(rows: Record<string, unknown>[], isSelectStar = false): string[] {
     if (rows.length === 0) return [];
-    return Object.keys(rows[0]);
+    const allKeys = Object.keys(rows[0]);
+    if (!isSelectStar) return allKeys;
+    return allKeys.filter(
+        (k) => !k.endsWith('_formatted') && !k.endsWith('_type') && !k.endsWith('_nav'),
+    );
 }
 
 /**
@@ -115,6 +103,53 @@ function getRequestedColumns(stmt: SelectStatement): string[] | null {
         }
         return c.alias ?? c.column;
     });
+}
+
+/**
+ * Resolve user-requested column names to actual keys in the result data.
+ * Virtual names like "owneridname" are mapped to their Dataverse annotation
+ * equivalents (e.g. _ownerid_value_formatted) and exposed under the
+ * user-friendly name by injecting the alias into each row.
+ */
+function resolveRequestedColumns(
+    requested: string[],
+    availableColumns: string[],
+    sampleRow: Record<string, unknown>,
+): string[] {
+    const resolved: string[] = [];
+    const allKeys = Object.keys(sampleRow);
+
+    for (const col of requested) {
+        if (availableColumns.includes(col)) {
+            resolved.push(col);
+            continue;
+        }
+        // Try virtual name resolution:
+        // xxxname → _xxx_value_formatted  (lookup display name)
+        // xxxname → xxx_formatted          (option set label)
+        // xxxid   → _xxxid_value           (lookup GUID)
+        if (col.endsWith('name') && col.length > 4) {
+            const base = col.slice(0, -4);
+            const lookupFmt = `_${base}_value_formatted`;
+            const optionFmt = `${base}_formatted`;
+            if (allKeys.includes(lookupFmt)) {
+                resolved.push(lookupFmt);
+                continue;
+            }
+            if (allKeys.includes(optionFmt)) {
+                resolved.push(optionFmt);
+                continue;
+            }
+        }
+        // xxxid → _xxxid_value (lookup GUID without _value suffix)
+        const lookupVal = `_${col}_value`;
+        if (allKeys.includes(lookupVal)) {
+            resolved.push(lookupVal);
+            continue;
+        }
+        // Not found — skip
+    }
+    return resolved;
 }
 
 /**
@@ -221,10 +256,17 @@ export function useQueryExecution(): QueryExecutionReturn {
                 const end = performance.now();
                 const executionTime = Math.round(end - start);
 
-                // If the user specified explicit columns, only show those
-                // (matched against the cleaned result keys). Otherwise show all.
-                const allColumns = extractColumns(rows);
-                const columns = requestedCols ? requestedCols.filter((c) => allColumns.includes(c)) : allColumns;
+                // If the user specified explicit columns, resolve virtual names
+                // (e.g. owneridname → _ownerid_value_formatted) and only show those.
+                // For SELECT *, hide derived _formatted/_type/_nav columns.
+                const isSelectStar = requestedCols === null;
+                const allColumns = extractColumns(rows, isSelectStar);
+                let columns: string[];
+                if (requestedCols) {
+                    columns = resolveRequestedColumns(requestedCols, allColumns, rows[0] ?? {});
+                } else {
+                    columns = allColumns;
+                }
 
                 setState((prev) => ({
                     ...prev,
