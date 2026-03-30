@@ -49,6 +49,8 @@ export default defineConfig({
     build: {
         outDir: 'dist',
         assetsDir: 'assets',
+        // Monaco editor core is ~3.8MB minified — unavoidable for a single IIFE bundle
+        chunkSizeWarningLimit: 5000,
         rollupOptions: {
             output: {
                 // Use IIFE format for compatibility with iframe srcdoc loading
