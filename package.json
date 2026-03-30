@@ -15,7 +15,8 @@
     ],
     "configurations": {
         "repository": "https://github.com/broediger/pptb-forge-sql",
-        "readmeUrl": "https://raw.githubusercontent.com/broediger/pptb-forge-sql/refs/heads/main/README.md"
+        "readmeUrl": "https://raw.githubusercontent.com/broediger/pptb-forge-sql/refs/heads/main/README.md",
+        "website": "https://github.com/broediger/pptb-forge-sql"
     },
     "repository": {
         "type": "git",
