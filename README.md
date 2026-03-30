@@ -2,6 +2,8 @@
 
 Write and execute SQL against Dataverse — SELECT, INSERT, UPDATE, and DELETE. Translates to FetchXML and Web API calls, with a Monaco-powered editor, schema autocomplete, and built-in safeguards for destructive operations.
 
+Forge SQL is inspired by [Mark Carrington's SQL4CDS](https://markcarrington.dev/) and serves as a lightweight alternative within Power Platform ToolBox until SQL4CDS is fully ported.
+
 ---
 
 ## Features
