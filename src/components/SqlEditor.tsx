@@ -44,8 +44,59 @@ export function SqlEditor({
     }, [onOpen]);
 
     const handleExecute = useCallback(() => {
-        const value = internalEditorRef.current?.getValue() ?? '';
-        onExecuteRef.current(value);
+        const editor = internalEditorRef.current;
+        if (!editor) return;
+
+        // If text is selected, execute only the selection
+        const selection = editor.getSelection();
+        if (selection && !selection.isEmpty()) {
+            const selectedText = editor.getModel()?.getValueInRange(selection) ?? '';
+            if (selectedText.trim()) {
+                onExecuteRef.current(selectedText);
+                return;
+            }
+        }
+
+        // No selection: find the statement at the cursor position
+        // Statements are separated by blank lines or semicolons
+        const fullText = editor.getValue();
+        const cursorLine = editor.getPosition()?.lineNumber ?? 1;
+        const lines = fullText.split('\n');
+
+        // Split into statement blocks by blank lines
+        const blocks: { startLine: number; endLine: number; text: string }[] = [];
+        let blockStart = 0;
+        let blockLines: string[] = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            if (trimmed === '' || trimmed === ';') {
+                if (blockLines.length > 0) {
+                    blocks.push({
+                        startLine: blockStart + 1,
+                        endLine: i,
+                        text: blockLines.join('\n').replace(/;\s*$/, ''),
+                    });
+                    blockLines = [];
+                }
+                blockStart = i + 1;
+            } else {
+                if (blockLines.length === 0) blockStart = i;
+                blockLines.push(lines[i]);
+            }
+        }
+        if (blockLines.length > 0) {
+            blocks.push({
+                startLine: blockStart + 1,
+                endLine: lines.length,
+                text: blockLines.join('\n').replace(/;\s*$/, ''),
+            });
+        }
+
+        // Find the block containing the cursor
+        const currentBlock = blocks.find((b) => cursorLine >= b.startLine && cursorLine <= b.endLine);
+        const sql = currentBlock?.text ?? fullText;
+        onExecuteRef.current(sql.trim());
     }, []);
 
     const handleMount: OnMount = (editor, monaco) => {
@@ -61,8 +112,7 @@ export function SqlEditor({
         // The command handler reads from the ref so it always calls the latest
         // onExecute even though this closure is created only once (Bug 4).
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-            const value = editor.getValue();
-            onExecuteRef.current(value);
+            handleExecute();
         });
 
         // Ctrl/Cmd+S → Save query
