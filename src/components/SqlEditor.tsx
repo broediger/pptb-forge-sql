@@ -58,40 +58,44 @@ export function SqlEditor({
         }
 
         // No selection: find the statement at the cursor position
-        // Statements are separated by blank lines or semicolons
+        // Statements are separated by blank lines, semicolons, or lines
+        // starting with a SQL keyword (SELECT, INSERT, UPDATE, DELETE)
         const fullText = editor.getValue();
         const cursorLine = editor.getPosition()?.lineNumber ?? 1;
         const lines = fullText.split('\n');
+        const stmtStartRe = /^\s*(SELECT|INSERT|UPDATE|DELETE)\b/i;
 
-        // Split into statement blocks by blank lines
         const blocks: { startLine: number; endLine: number; text: string }[] = [];
         let blockStart = 0;
         let blockLines: string[] = [];
 
+        const flushBlock = (endLine: number) => {
+            if (blockLines.length > 0) {
+                blocks.push({
+                    startLine: blockStart + 1,
+                    endLine,
+                    text: blockLines.join('\n').replace(/;\s*$/, ''),
+                });
+                blockLines = [];
+            }
+        };
+
         for (let i = 0; i < lines.length; i++) {
             const trimmed = lines[i].trim();
             if (trimmed === '' || trimmed === ';') {
-                if (blockLines.length > 0) {
-                    blocks.push({
-                        startLine: blockStart + 1,
-                        endLine: i,
-                        text: blockLines.join('\n').replace(/;\s*$/, ''),
-                    });
-                    blockLines = [];
-                }
+                flushBlock(i);
                 blockStart = i + 1;
+            } else if (blockLines.length > 0 && stmtStartRe.test(lines[i])) {
+                // New statement keyword on a new line — flush previous block
+                flushBlock(i);
+                blockStart = i;
+                blockLines.push(lines[i]);
             } else {
                 if (blockLines.length === 0) blockStart = i;
                 blockLines.push(lines[i]);
             }
         }
-        if (blockLines.length > 0) {
-            blocks.push({
-                startLine: blockStart + 1,
-                endLine: lines.length,
-                text: blockLines.join('\n').replace(/;\s*$/, ''),
-            });
-        }
+        flushBlock(lines.length);
 
         // Find the block containing the cursor
         const currentBlock = blocks.find((b) => cursorLine >= b.startLine && cursorLine <= b.endLine);
