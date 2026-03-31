@@ -364,11 +364,11 @@ function parseSelect(tokens: Token[]): SelectStatement {
     function parseOptionalAlias(): string | undefined {
         if (check(TokenType.AS)) {
             advance();
+            if (check(TokenType.STRING)) return advance().value;
             return expectIdentifierOrKeyword().value;
         }
-        if (peek().type === TokenType.IDENTIFIER) {
-            return advance().value;
-        }
+        if (peek().type === TokenType.STRING) return advance().value;
+        if (peek().type === TokenType.IDENTIFIER) return advance().value;
         return undefined;
     }
 
