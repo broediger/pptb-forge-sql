@@ -335,15 +335,49 @@ export default function App() {
         editor.focus();
     }, []);
 
+    const [exporting, setExporting] = useState<'csv' | 'json' | null>(null);
+
+    const notify = useCallback((title: string, body: string, type: 'success' | 'error' = 'success') => {
+        try {
+            window.toolboxAPI.utils.showNotification({ title, body, type });
+        } catch {
+            /* toolboxAPI may not be available in dev mode */
+        }
+    }, []);
+
     const handleExportCsv = useCallback(() => {
-        if (!activeTabResults.results) return;
-        exportToCsv(activeTabResults.results, activeTabResults.columns);
-    }, [activeTabResults.results, activeTabResults.columns]);
+        if (!activeTabResults.results || exporting) return;
+        const rows = activeTabResults.results;
+        const columns = activeTabResults.columns;
+        setExporting('csv');
+        // Defer so the "Exporting…" state can paint before the blocking serialize.
+        setTimeout(() => {
+            try {
+                exportToCsv(rows, columns);
+                notify('Export complete', `CSV download started (${rows.length} rows)`);
+            } catch (err) {
+                notify('Export failed', err instanceof Error ? err.message : String(err), 'error');
+            } finally {
+                setExporting(null);
+            }
+        }, 0);
+    }, [activeTabResults.results, activeTabResults.columns, exporting, notify]);
 
     const handleExportJson = useCallback(() => {
-        if (!activeTabResults.results) return;
-        exportToJson(activeTabResults.results);
-    }, [activeTabResults.results]);
+        if (!activeTabResults.results || exporting) return;
+        const rows = activeTabResults.results;
+        setExporting('json');
+        setTimeout(() => {
+            try {
+                exportToJson(rows);
+                notify('Export complete', `JSON download started (${rows.length} rows)`);
+            } catch (err) {
+                notify('Export failed', err instanceof Error ? err.message : String(err), 'error');
+            } finally {
+                setExporting(null);
+            }
+        }, 0);
+    }, [activeTabResults.results, exporting, notify]);
 
     const handleSaveQuery = useCallback(async () => {
         const sql = editorRef.current?.getValue() ?? '';
@@ -681,17 +715,19 @@ export default function App() {
                             <div className="ml-auto flex items-center gap-1 pr-2">
                                 <button
                                     onClick={handleExportCsv}
-                                    className={`px-2.5 py-1 text-xs rounded transition-colors ${isDark ? 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
+                                    disabled={exporting !== null}
+                                    className={`px-2.5 py-1 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-wait ${isDark ? 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
                                     title="Export as CSV"
                                 >
-                                    CSV
+                                    {exporting === 'csv' ? 'Exporting…' : 'CSV'}
                                 </button>
                                 <button
                                     onClick={handleExportJson}
-                                    className={`px-2.5 py-1 text-xs rounded transition-colors ${isDark ? 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
+                                    disabled={exporting !== null}
+                                    className={`px-2.5 py-1 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-wait ${isDark ? 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
                                     title="Export as JSON"
                                 >
-                                    JSON
+                                    {exporting === 'json' ? 'Exporting…' : 'JSON'}
                                 </button>
                             </div>
                         )}

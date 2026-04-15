@@ -33,14 +33,16 @@ const ANNOTATION_MAP: [RegExp, string][] = [
     [/@Microsoft\.Dynamics\.CRM\.associatednavigationproperty$/, '_nav'],
 ];
 
+const LOOKUP_VALUE_PATTERN = /^_(.+)_value$/;
+
 /**
  * Transform Dataverse result rows:
  * 1. Rename OData annotation keys to readable suffixes
- * 2. Create friendly aliases for lookup columns:
- *    _ownerid_value         → also as ownerid (GUID)
+ * 2. Expose lookup GUIDs under clean names:
+ *    _ownerid_value           → also as ownerid
  *    _ownerid_value_formatted → also as owneridname (display name)
- * 3. Create xxxname alias for any column's formatted value:
- *    accountratingcode_formatted → also as accountratingcodename
+ * 3. Expose optionset labels under xxxname:
+ *    action_formatted → also as actionname
  * 4. Drop pure metadata keys (@odata.etag)
  */
 function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -48,23 +50,31 @@ function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
     return rows.map((row) => {
         const cleaned: Record<string, unknown> = {};
 
-        // First pass: keep plain keys and rename annotations
         for (const [key, value] of Object.entries(row)) {
             if (!key.includes('@')) {
                 cleaned[key] = value;
+                // _xxx_value → also expose as xxx (clean GUID alias)
+                const lookupMatch = key.match(LOOKUP_VALUE_PATTERN);
+                if (lookupMatch && !(lookupMatch[1] in cleaned)) {
+                    cleaned[lookupMatch[1]] = value;
+                }
                 continue;
             }
-            let renamed = false;
             for (const [pattern, suffix] of ANNOTATION_MAP) {
                 if (pattern.test(key)) {
                     const baseCol = key.replace(pattern, '');
                     cleaned[baseCol + suffix] = value;
-                    renamed = true;
+                    if (suffix === '_formatted') {
+                        // Lookup formatted: _userid_value_formatted → useridname
+                        // Optionset formatted: action_formatted → actionname
+                        const lookupMatch = baseCol.match(LOOKUP_VALUE_PATTERN);
+                        const nameAlias = lookupMatch ? `${lookupMatch[1]}name` : `${baseCol}name`;
+                        if (!(nameAlias in cleaned)) {
+                            cleaned[nameAlias] = value;
+                        }
+                    }
                     break;
                 }
-            }
-            if (!renamed) {
-                /* drop unknown @-keys */
             }
         }
 
@@ -81,8 +91,14 @@ function extractColumns(rows: Record<string, unknown>[], isSelectStar = false): 
     if (rows.length === 0) return [];
     const allKeys = Object.keys(rows[0]);
     if (!isSelectStar) return allKeys;
+    // Hide derived alias columns and raw _xxx_value lookup keys — the clean
+    // xxx / xxxname aliases are exposed instead.
     return allKeys.filter(
-        (k) => !k.endsWith('_formatted') && !k.endsWith('_type') && !k.endsWith('_nav'),
+        (k) =>
+            !k.endsWith('_formatted') &&
+            !k.endsWith('_type') &&
+            !k.endsWith('_nav') &&
+            !LOOKUP_VALUE_PATTERN.test(k),
     );
 }
 
