@@ -294,9 +294,13 @@ function generateAttributeLine(
         return ''; // wildcard — handled separately as <all-attributes />
     }
     const name = xmlEscape(col.column);
-    const alias = col.alias ? ` alias="${xmlEscape(col.alias)}"` : '';
     const isGroupBy =
         groupByColumns.has(col.column) || (col.table ? groupByColumns.has(`${col.table}.${col.column}`) : false);
+    // Dataverse requires an alias on every attribute in an aggregate query
+    // (including the groupby column). Default to the column name itself when
+    // none is supplied so the generated FetchXML is accepted.
+    const aliasValue = col.alias ?? (isGroupBy ? col.column : undefined);
+    const alias = aliasValue ? ` alias="${xmlEscape(aliasValue)}"` : '';
     const groupby = isGroupBy ? ` groupby="true"` : '';
     return `${indent}<attribute name="${name}"${groupby}${alias} />`;
 }
@@ -491,15 +495,17 @@ export function generateFetchXml(ast: SelectStatement): string {
         // Build a set of known join aliases/tables for entityname resolution
         const joinAliasSet = new Set(ast.joins.map((j) => j.alias ?? j.table));
         for (const item of ast.orderBy) {
-            const attr = xmlEscape(item.column.column);
+            const ref = xmlEscape(item.column.column);
             const tableRef = item.column.table;
             // If ordering by a column from a joined entity, emit entityname attribute
             const entitynamePart = tableRef && joinAliasSet.has(tableRef) ? ` entityname="${xmlEscape(tableRef)}"` : '';
-            if (item.direction === 'DESC') {
-                lines.push(`    <order attribute="${attr}"${entitynamePart} descending="true" />`);
-            } else {
-                lines.push(`    <order attribute="${attr}"${entitynamePart} />`);
-            }
+            // Aggregate queries (GROUP BY / aggregate functions) require
+            // ordering by alias rather than attribute. Group-by attributes are
+            // emitted with `alias=<column name>` by generateAttributeLine, so
+            // an ORDER BY on the column name still resolves to the alias.
+            const refAttr = hasAggregate ? `alias="${ref}"` : `attribute="${ref}"`;
+            const descPart = item.direction === 'DESC' ? ' descending="true"' : '';
+            lines.push(`    <order ${refAttr}${entitynamePart}${descPart} />`);
         }
     }
 

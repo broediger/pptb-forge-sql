@@ -134,6 +134,18 @@ describe('parse', () => {
             expect(ast.distinct).toBe(true);
             expect(ast.top).toBe(5);
         });
+
+        it('throws a helpful error when DISTINCT follows TOP', () => {
+            expect(() => parseSQL('SELECT TOP 10 DISTINCT accountname FROM account')).toThrow(
+                /DISTINCT must come before TOP/,
+            );
+        });
+
+        it('throws a helpful error when DISTINCT is written as DISTINCT(col)', () => {
+            expect(() => parseSQL('SELECT DISTINCT(accountname) FROM account')).toThrow(
+                /DISTINCT does not take parentheses/,
+            );
+        });
     });
 
     // ── Aggregates ────────────────────────────────────────────────────────────

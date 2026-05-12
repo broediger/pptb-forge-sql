@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './monacoSetup';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
 // Ensure DOM is ready and root element exists
@@ -12,7 +13,9 @@ if (rootElement && !rootElement.hasAttribute('data-reactroot-initialized')) {
 
     createRoot(rootElement).render(
         <StrictMode>
-            <App />
+            <ErrorBoundary>
+                <App />
+            </ErrorBoundary>
         </StrictMode>,
     );
 } else if (!rootElement) {

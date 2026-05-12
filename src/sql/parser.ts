@@ -513,6 +513,14 @@ function parseSelect(tokens: Token[]): SelectStatement {
     if (check(TokenType.DISTINCT)) {
         advance();
         distinct = true;
+        if (check(TokenType.LPAREN)) {
+            const t = peek();
+            throw new SqlParseError(
+                "DISTINCT does not take parentheses. Use 'SELECT DISTINCT col FROM ...' (or 'COUNT(DISTINCT col)' inside an aggregate).",
+                t.line,
+                t.column,
+            );
+        }
     }
 
     let top: number | undefined;
@@ -520,6 +528,14 @@ function parseSelect(tokens: Token[]): SelectStatement {
         advance();
         const n = expect(TokenType.NUMBER);
         top = Number(n.value);
+        if (check(TokenType.DISTINCT)) {
+            const t = peek();
+            throw new SqlParseError(
+                "DISTINCT must come before TOP. Use 'SELECT DISTINCT TOP N ...' instead of 'SELECT TOP N DISTINCT ...'.",
+                t.line,
+                t.column,
+            );
+        }
     }
 
     const columns = parseSelectList();

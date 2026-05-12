@@ -194,8 +194,13 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
     const rowVirtualizer = useVirtualizer({
         count: table.getRowModel().rows.length,
         getScrollElement: () => tableContainerRef.current,
-        estimateSize: () => 33, // approximate row height in px
+        estimateSize: () => 33, // fixed row height in px
         overscan: 15,
+        // Force a constant measured size. The DOM elements have `height: 33px`
+        // applied via inline style so the visual matches. Returning a constant
+        // here prevents subpixel measurement noise from triggering a
+        // setState-during-render loop in @tanstack/react-virtual.
+        measureElement: () => 33,
     });
 
     if (data.length === 0 && !isLoading) {
@@ -225,16 +230,21 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
             )}
 
             <div ref={tableContainerRef} className="overflow-auto flex-1">
-                <table className="text-sm border-collapse" style={{ width: table.getCenterTotalSize() }}>
-                    <thead>
+                <div role="table" className="text-sm" style={{ width: table.getCenterTotalSize() }}>
+                    <div role="rowgroup" className="sticky top-0 z-10">
                         {table.getHeaderGroups().map((headerGroup) => (
-                            <tr key={headerGroup.id} style={{ display: 'flex', width: table.getCenterTotalSize() }}>
+                            <div
+                                key={headerGroup.id}
+                                role="row"
+                                style={{ display: 'flex', width: table.getCenterTotalSize() }}
+                            >
                                 {headerGroup.headers.map((header) => {
                                     const sorted = header.column.getIsSorted();
                                     return (
-                                        <th
+                                        <div
                                             key={header.id}
-                                            className={`sticky top-0 text-left px-3 py-2 font-medium cursor-pointer select-none whitespace-nowrap z-10 relative ${
+                                            role="columnheader"
+                                            className={`text-left px-3 py-2 font-medium cursor-pointer select-none whitespace-nowrap relative ${
                                                 isDark
                                                     ? 'bg-gray-800 text-gray-300 border-b border-r border-gray-600'
                                                     : 'bg-gray-100 text-gray-700 border-b border-r border-gray-300'
@@ -248,26 +258,32 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                                 {sorted === 'desc' && <span className="text-gray-400">▼</span>}
                                             </span>
                                             <ResizeHandle header={header} isDark={isDark} />
-                                        </th>
+                                        </div>
                                     );
                                 })}
-                            </tr>
+                            </div>
                         ))}
-                    </thead>
-                    <tbody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+                    </div>
+                    <div
+                        role="rowgroup"
+                        style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}
+                    >
                         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                             const row = table.getRowModel().rows[virtualRow.index];
                             return (
-                                <tr
+                                <div
                                     key={row.id}
+                                    role="row"
                                     data-index={virtualRow.index}
-                                    ref={(node) => rowVirtualizer.measureElement(node)}
+                                    ref={rowVirtualizer.measureElement}
                                     style={{
                                         display: 'flex',
                                         position: 'absolute',
                                         top: 0,
                                         left: 0,
                                         width: table.getCenterTotalSize(),
+                                        height: '33px',
+                                        boxSizing: 'border-box',
                                         transform: `translateY(${virtualRow.start}px)`,
                                     }}
                                     className={
@@ -284,8 +300,9 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                         const canOpenRecord = guidValue && entityName && connectionUrl;
 
                                         return (
-                                            <td
+                                            <div
                                                 key={cell.id}
+                                                role="cell"
                                                 className={`px-3 py-1.5 truncate ${
                                                     isDark
                                                         ? 'border-b border-r border-gray-700 text-gray-200'
@@ -332,14 +349,14 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                                 ) : (
                                                     displayText
                                                 )}
-                                            </td>
+                                            </div>
                                         );
                                     })}
-                                </tr>
+                                </div>
                             );
                         })}
-                    </tbody>
-                </table>
+                    </div>
+                </div>
             </div>
 
             {isLoading && data.length === 0 && (
