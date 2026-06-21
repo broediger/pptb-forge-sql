@@ -1,6 +1,6 @@
 {
     "name": "pptb-forge-sql",
-    "version": "0.1.1",
+    "version": "1.0.0",
     "displayName": "Forge SQL",
     "description": "Write and execute SQL against Dataverse — SELECT, INSERT, UPDATE, and DELETE. Translates to FetchXML and Web API calls.",
     "main": "index.html",
@@ -40,7 +40,8 @@
         "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
         "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
         "type-check": "tsc --noEmit",
-        "finalize-package": "npm shrinkwrap"
+        "validate": "npx pptb-validate",
+    "finalize-package": "npm shrinkwrap"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.7.0",
@@ -69,7 +70,6 @@
     },
     "files": [
         "dist",
-        "icon.svg",
         "npm-shrinkwrap.json"
     ]
 }
