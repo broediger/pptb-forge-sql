@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2] - 2026-06-23
+
+### Fixed
+- Light mode: schema/table list is now legible — entity names, attribute rows, type badges, borders, and the attribute filter input adapt to the active theme instead of using dark-only styling (#1)
+- Theme toggle: switching the theme in the toolbox settings now updates the tool live by re-reading the theme on the host `settings:updated` event, instead of only reading it once on load (#1)
+
 ## [0.1.1] - 2026-03-31
 
 ### Added
