@@ -2,6 +2,14 @@ import { useState, useCallback, useRef } from 'react';
 import { tokenize, parseStatement, generateFetchXml, SqlParseError } from '../sql';
 import type { SelectStatement, WhereExpr, ColumnRef, AggregateExpr } from '../sql/types';
 import { isAggregateExpr } from '../sql/types';
+import {
+    cleanRows,
+    extractColumns,
+    getRequestedColumns,
+    resolveRequestedColumns,
+    unresolvedVirtualColumns,
+    rewriteVirtualColumns,
+} from '../sql/columnResolution';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -26,176 +34,6 @@ interface QueryExecutionReturn extends QueryExecutionState {
 }
 
 const PAGING_COOKIE_KEY = '@Microsoft.Dynamics.CRM.fetchxmlpagingcookie';
-
-// OData annotation suffixes → clean column name suffixes
-const ANNOTATION_MAP: [RegExp, string][] = [
-    [/@OData\.Community\.Display\.V1\.FormattedValue$/, '_formatted'],
-    [/@Microsoft\.Dynamics\.CRM\.lookuplogicalname$/, '_type'],
-    [/@Microsoft\.Dynamics\.CRM\.associatednavigationproperty$/, '_nav'],
-];
-
-const LOOKUP_VALUE_PATTERN = /^_(.+)_value$/;
-
-/**
- * Transform Dataverse result rows:
- * 1. Rename OData annotation keys to readable suffixes
- * 2. Expose lookup GUIDs under clean names:
- *    _ownerid_value           → also as ownerid
- *    _ownerid_value_formatted → also as owneridname (display name)
- * 3. Expose optionset labels under xxxname:
- *    action_formatted → also as actionname
- * 4. Drop pure metadata keys (@odata.etag)
- */
-function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
-    if (rows.length === 0) return rows;
-    return rows.map((row) => {
-        const cleaned: Record<string, unknown> = {};
-
-        for (const [key, value] of Object.entries(row)) {
-            if (!key.includes('@')) {
-                cleaned[key] = value;
-                // _xxx_value → also expose as xxx (clean GUID alias)
-                const lookupMatch = key.match(LOOKUP_VALUE_PATTERN);
-                if (lookupMatch && !(lookupMatch[1] in cleaned)) {
-                    cleaned[lookupMatch[1]] = value;
-                }
-                continue;
-            }
-            for (const [pattern, suffix] of ANNOTATION_MAP) {
-                if (pattern.test(key)) {
-                    const baseCol = key.replace(pattern, '');
-                    cleaned[baseCol + suffix] = value;
-                    if (suffix === '_formatted') {
-                        // Lookup formatted: _userid_value_formatted → useridname
-                        // Optionset formatted: action_formatted → actionname
-                        const lookupMatch = baseCol.match(LOOKUP_VALUE_PATTERN);
-                        const nameAlias = lookupMatch ? `${lookupMatch[1]}name` : `${baseCol}name`;
-                        if (!(nameAlias in cleaned)) {
-                            cleaned[nameAlias] = value;
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-
-        return cleaned;
-    });
-}
-
-/**
- * Extract columns for display. When isSelectStar is true, hide the
- * derived alias columns (_formatted, _type, _nav, xxxname from lookups)
- * to reduce noise — users can request them explicitly if needed.
- */
-function extractColumns(rows: Record<string, unknown>[], isSelectStar = false): string[] {
-    if (rows.length === 0) return [];
-    const allKeys = Object.keys(rows[0]);
-    if (!isSelectStar) return allKeys;
-    // Hide derived alias columns and raw _xxx_value lookup keys — the clean
-    // xxx / xxxname aliases are exposed instead.
-    return allKeys.filter(
-        (k) =>
-            !k.endsWith('_formatted') &&
-            !k.endsWith('_type') &&
-            !k.endsWith('_nav') &&
-            !LOOKUP_VALUE_PATTERN.test(k),
-    );
-}
-
-/**
- * Derive the display columns from the original SELECT AST.
- * For `SELECT *`, returns null (meaning: show all columns from results).
- * For explicit columns, returns the list of requested names (including
- * virtual names like owneridname) so only those are displayed.
- */
-function getRequestedColumns(stmt: SelectStatement): string[] | null {
-    const hasStar = stmt.columns.some((c) => !('function' in c) && c.column === '*' && !c.table);
-    if (hasStar) return null; // SELECT * → show everything
-
-    return stmt.columns.map((c) => {
-        if ('function' in c) {
-            // Aggregate: use alias or auto-generated name
-            return c.alias ?? `${c.function.toLowerCase()}_${c.column.column === '*' ? 'all' : c.column.column}`;
-        }
-        return c.alias ?? c.column;
-    });
-}
-
-/**
- * Resolve user-requested column names to actual keys in the result data.
- * Virtual names like "owneridname" are mapped to their Dataverse annotation
- * equivalents (e.g. _ownerid_value_formatted) and exposed under the
- * user-friendly name by injecting the alias into each row.
- */
-function resolveRequestedColumns(
-    requested: string[],
-    availableColumns: string[],
-    sampleRow: Record<string, unknown>,
-): string[] {
-    const resolved: string[] = [];
-    const allKeys = Object.keys(sampleRow);
-
-    for (const col of requested) {
-        if (availableColumns.includes(col)) {
-            resolved.push(col);
-            continue;
-        }
-        // Try virtual name resolution:
-        // xxxname → _xxx_value_formatted  (lookup display name)
-        // xxxname → xxx_formatted          (option set label)
-        // xxxid   → _xxxid_value           (lookup GUID)
-        if (col.endsWith('name') && col.length > 4) {
-            const base = col.slice(0, -4);
-            const lookupFmt = `_${base}_value_formatted`;
-            const optionFmt = `${base}_formatted`;
-            if (allKeys.includes(lookupFmt)) {
-                resolved.push(lookupFmt);
-                continue;
-            }
-            if (allKeys.includes(optionFmt)) {
-                resolved.push(optionFmt);
-                continue;
-            }
-        }
-        // xxxid → _xxxid_value (lookup GUID without _value suffix)
-        const lookupVal = `_${col}_value`;
-        if (allKeys.includes(lookupVal)) {
-            resolved.push(lookupVal);
-            continue;
-        }
-        // Not found — skip
-    }
-    return resolved;
-}
-
-/**
- * Rewrite virtual column names in a SelectStatement before FetchXML generation.
- * Dataverse doesn't have `xxxname` attributes — they are formatted values of
- * the base lookup/optionset column. This rewrites the AST so the correct base
- * column is requested in FetchXML, and the friendly alias appears in results
- * via the cleanRows annotation mapping.
- *
- * Examples:
- *   owneridname  → ownerid  (lookup display name)
- *   statuscodename → statuscode (optionset label)
- */
-function rewriteVirtualColumns(stmt: SelectStatement): SelectStatement {
-    let changed = false;
-    const newColumns = stmt.columns.map((col) => {
-        if ('function' in col) return col; // aggregate — skip
-        if (col.column === '*') return col;
-        const name = col.column;
-        // If column ends with 'name' and is more than just 'name', strip it
-        if (name.length > 4 && name.endsWith('name')) {
-            const base = name.slice(0, -4); // e.g. owneridname → ownerid
-            changed = true;
-            return { ...col, column: base };
-        }
-        return col;
-    });
-    return changed ? { ...stmt, columns: newColumns } : stmt;
-}
 
 /**
  * SQL4CDS-compatible attribute aliases per entity. The audit entity's
@@ -681,22 +519,61 @@ export function useQueryExecution(): QueryExecutionReturn {
 
                     throw queryErr;
                 }
-                const rows = applyReverseEntityAliases(rawRows, stmt.from.table);
-
-                const end = performance.now();
-                const executionTime = Math.round(end - start);
+                let rows = applyReverseEntityAliases(rawRows, stmt.from.table);
 
                 // If the user specified explicit columns, resolve virtual names
                 // (e.g. owneridname → _ownerid_value_formatted) and only show those.
                 // For SELECT *, hide derived _formatted/_type/_nav columns.
                 const isSelectStar = requestedCols === null;
-                const allColumns = extractColumns(rows, isSelectStar);
-                let columns: string[];
-                if (requestedCols) {
-                    columns = resolveRequestedColumns(requestedCols, allColumns, rows[0] ?? {});
-                } else {
-                    columns = allColumns;
+                let allColumns = extractColumns(rows, isSelectStar);
+                let columns: string[] = requestedCols
+                    ? resolveRequestedColumns(requestedCols, allColumns, rows[0] ?? {})
+                    : allColumns;
+
+                // Recover virtual `xxxname` columns that Dataverse silently dropped.
+                // Requesting an unknown attribute like `owneridname` on its own
+                // returns rows with no owner data and no 0x80041103 error, so the
+                // literal-vs-rewrite retry above never fired. Rewrite just the
+                // unresolved name columns to their base lookup/optionset
+                // (owneridname → ownerid) and re-run once so the formatted value
+                // comes back and resolves.
+                if (requestedCols && effectiveStmt === stmt && rows.length > 0) {
+                    const unresolved = unresolvedVirtualColumns(requestedCols, allColumns, rows[0] ?? {});
+                    if (unresolved.size > 0) {
+                        const rewritten = rewriteVirtualColumns(stmt, unresolved);
+                        if (rewritten !== stmt) {
+                            const retryFetchXml = generateFetchXml(applyEntityAliases(rewritten));
+                            try {
+                                const retry = await runFetchXml(retryFetchXml);
+                                const retryRows = applyReverseEntityAliases(retry.rows, stmt.from.table);
+                                const retryAllColumns = extractColumns(retryRows, isSelectStar);
+                                const retryColumns = resolveRequestedColumns(
+                                    requestedCols,
+                                    retryAllColumns,
+                                    retryRows[0] ?? {},
+                                );
+                                // Only adopt the rewrite if it actually resolved more
+                                // columns — otherwise keep the literal result so the
+                                // clear "no readable columns" error still surfaces.
+                                if (retryColumns.length > columns.length) {
+                                    effectiveStmt = rewritten;
+                                    fetchXml = retryFetchXml;
+                                    rawRows = retry.rows;
+                                    pagingCookie = retry.pagingCookie;
+                                    rows = retryRows;
+                                    allColumns = retryAllColumns;
+                                    columns = retryColumns;
+                                }
+                            } catch {
+                                // Rewrite re-run failed (e.g. the stripped base isn't a
+                                // real attribute) — fall back to the literal result.
+                            }
+                        }
+                    }
                 }
+
+                const end = performance.now();
+                const executionTime = Math.round(end - start);
 
                 // Dataverse returns rows but silently drops attributes when:
                 //  - the column is encrypted and the query uses DISTINCT/aggregates
