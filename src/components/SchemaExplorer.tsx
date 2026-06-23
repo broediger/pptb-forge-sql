@@ -7,7 +7,7 @@ interface SchemaExplorerProps {
     isConnected?: boolean;
 }
 
-const ATTRIBUTE_TYPE_COLORS: Record<string, string> = {
+const ATTRIBUTE_TYPE_COLORS_DARK: Record<string, string> = {
     String: 'bg-blue-900/60 text-blue-300',
     Memo: 'bg-blue-900/60 text-blue-300',
     Integer: 'bg-purple-900/60 text-purple-300',
@@ -25,8 +25,27 @@ const ATTRIBUTE_TYPE_COLORS: Record<string, string> = {
     UniqueIdentifier: 'bg-neutral-700 text-neutral-300',
 };
 
-function attributeTypeColor(type: string): string {
-    return ATTRIBUTE_TYPE_COLORS[type] ?? 'bg-neutral-700 text-neutral-400';
+const ATTRIBUTE_TYPE_COLORS_LIGHT: Record<string, string> = {
+    String: 'bg-blue-100 text-blue-700',
+    Memo: 'bg-blue-100 text-blue-700',
+    Integer: 'bg-purple-100 text-purple-700',
+    BigInt: 'bg-purple-100 text-purple-700',
+    Decimal: 'bg-purple-100 text-purple-700',
+    Double: 'bg-purple-100 text-purple-700',
+    Money: 'bg-green-100 text-green-700',
+    Boolean: 'bg-orange-100 text-orange-700',
+    DateTime: 'bg-yellow-100 text-yellow-800',
+    Lookup: 'bg-pink-100 text-pink-700',
+    Owner: 'bg-pink-100 text-pink-700',
+    Picklist: 'bg-teal-100 text-teal-700',
+    State: 'bg-teal-100 text-teal-700',
+    Status: 'bg-teal-100 text-teal-700',
+    UniqueIdentifier: 'bg-gray-200 text-gray-600',
+};
+
+function attributeTypeColor(type: string, isDark: boolean): string {
+    const map = isDark ? ATTRIBUTE_TYPE_COLORS_DARK : ATTRIBUTE_TYPE_COLORS_LIGHT;
+    return map[type] ?? (isDark ? 'bg-neutral-700 text-neutral-400' : 'bg-gray-200 text-gray-500');
 }
 
 import type { AttributeInfo } from '../stores/schemaStore';
@@ -37,12 +56,14 @@ function ExpandedAttributes({
     onRetry,
     onInsertText,
     filter,
+    isDark,
 }: {
     attributes: AttributeInfo[] | null;
     attributeError: string | null;
     onRetry: () => void;
     onInsertText?: (text: string) => void;
     filter: string;
+    isDark: boolean;
 }) {
     const [attrSearch, setAttrSearch] = useState('');
     const searchTerm = (filter || attrSearch).toLowerCase();
@@ -59,12 +80,12 @@ function ExpandedAttributes({
         : null;
 
     return (
-        <div className="ml-5 border-l border-neutral-700 pl-2">
+        <div className={`ml-5 border-l pl-2 ${isDark ? 'border-neutral-700' : 'border-gray-200'}`}>
             {attributeError ? (
                 <div className="flex items-center gap-2 px-2 py-1.5">
-                    <span className="text-xs text-red-400">{attributeError}</span>
+                    <span className={`text-xs ${isDark ? 'text-red-400' : 'text-red-600'}`}>{attributeError}</span>
                     <button
-                        className="rounded px-2 py-0.5 text-xs bg-neutral-700 text-neutral-200 hover:bg-neutral-600 transition-colors"
+                        className={`rounded px-2 py-0.5 text-xs transition-colors ${isDark ? 'bg-neutral-700 text-neutral-200 hover:bg-neutral-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                         onClick={(e) => {
                             e.stopPropagation();
                             onRetry();
@@ -76,7 +97,7 @@ function ExpandedAttributes({
             ) : !attributes ? (
                 <div className="flex items-center gap-1.5 px-2 py-1.5">
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-600 border-t-indigo-400" />
-                    <span className="text-xs text-neutral-500">Loading…</span>
+                    <span className={`text-xs ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>Loading…</span>
                 </div>
             ) : (
                 <>
@@ -88,20 +109,20 @@ function ExpandedAttributes({
                                 value={attrSearch}
                                 onChange={(e) => setAttrSearch(e.target.value)}
                                 placeholder="Filter attributes…"
-                                className="w-full rounded px-2 py-1 text-xs bg-neutral-700 text-neutral-200 placeholder:text-neutral-500 outline-none focus:ring-1 focus:ring-indigo-500"
+                                className={`w-full rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-indigo-500 ${isDark ? 'bg-neutral-700 text-neutral-200 placeholder:text-neutral-500' : 'bg-white text-gray-700 placeholder:text-gray-400 border border-gray-200'}`}
                                 onClick={(e) => e.stopPropagation()}
                             />
                         </div>
                     )}
                     {filtered && filtered.length === 0 ? (
-                        <p className="px-2 py-1 text-xs text-neutral-500">
+                        <p className={`px-2 py-1 text-xs ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>
                             {searchTerm ? 'No matching attributes' : 'No attributes'}
                         </p>
                     ) : (
                         filtered?.map((attr) => (
                             <button
                                 key={attr.logicalName}
-                                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-neutral-700/50 transition-colors"
+                                className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left transition-colors ${isDark ? 'hover:bg-neutral-700/50' : 'hover:bg-gray-200/60'}`}
                                 onClick={() => onInsertText?.(attr.logicalName)}
                                 title={
                                     attr.displayName !== attr.logicalName
@@ -109,11 +130,11 @@ function ExpandedAttributes({
                                         : `Insert "${attr.logicalName}"`
                                 }
                             >
-                                <span className="truncate text-xs text-neutral-300">{attr.logicalName}</span>
+                                <span className={`truncate text-xs ${isDark ? 'text-neutral-300' : 'text-gray-600'}`}>{attr.logicalName}</span>
                                 <span
                                     className={[
                                         'ml-auto shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none',
-                                        attributeTypeColor(attr.attributeType),
+                                        attributeTypeColor(attr.attributeType, isDark),
                                     ].join(' ')}
                                 >
                                     {attr.attributeType}
@@ -131,10 +152,12 @@ function EntityRow({
     entity,
     onInsertText,
     globalAttrFilter,
+    isDark,
 }: {
     entity: EntityInfo;
     onInsertText?: (text: string) => void;
     globalAttrFilter: string;
+    isDark: boolean;
 }) {
     const [manualExpanded, setManualExpanded] = useState(false);
     const [attributeError, setAttributeError] = useState<string | null>(null);
@@ -160,13 +183,14 @@ function EntityRow({
         <div>
             {/* Entity row */}
             <div
-                className="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 hover:bg-neutral-700/60 transition-colors group"
+                className={`flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 transition-colors group ${isDark ? 'hover:bg-neutral-700/60' : 'hover:bg-gray-200/70'}`}
                 onClick={handleToggle}
             >
                 {/* Expand chevron */}
                 <svg
                     className={[
-                        'h-3 w-3 shrink-0 text-neutral-500 transition-transform',
+                        'h-3 w-3 shrink-0 transition-transform',
+                        isDark ? 'text-neutral-500' : 'text-gray-400',
                         expanded ? 'rotate-90' : '',
                     ].join(' ')}
                     fill="none"
@@ -186,9 +210,9 @@ function EntityRow({
                     }}
                     title={`Insert "${entity.logicalName}"`}
                 >
-                    <span className="truncate text-xs font-semibold text-neutral-100">{entity.logicalName}</span>
+                    <span className={`truncate text-xs font-semibold ${isDark ? 'text-neutral-100' : 'text-gray-900'}`}>{entity.logicalName}</span>
                     {entity.displayName && entity.displayName !== entity.logicalName && (
-                        <span className="truncate text-xs text-neutral-500">{entity.displayName}</span>
+                        <span className={`truncate text-xs ${isDark ? 'text-neutral-500' : 'text-gray-400'}`}>{entity.displayName}</span>
                     )}
                 </button>
             </div>
@@ -208,6 +232,7 @@ function EntityRow({
                     }}
                     onInsertText={onInsertText}
                     filter={attributeFilter}
+                    isDark={isDark}
                 />
             )}
         </div>
@@ -267,7 +292,7 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
                     {entitySearch && (
                         <button
                             onClick={() => setEntitySearch('')}
-                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5"
+                            className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 ${isDark ? 'text-neutral-400 hover:text-neutral-200' : 'text-gray-400 hover:text-gray-600'}`}
                             title="Clear"
                         >
                             <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
@@ -287,7 +312,7 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
                     {attrSearch && (
                         <button
                             onClick={() => setAttrSearch('')}
-                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5"
+                            className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 ${isDark ? 'text-neutral-400 hover:text-neutral-200' : 'text-gray-400 hover:text-gray-600'}`}
                             title="Clear"
                         >
                             <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
@@ -326,6 +351,7 @@ export function SchemaExplorer({ onInsertText, isDark = false, isConnected = fal
                             entity={entity}
                             onInsertText={onInsertText}
                             globalAttrFilter={attrSearch}
+                            isDark={isDark}
                         />
                     ))
                 )}
