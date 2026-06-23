@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.3] - 2026-06-24
+
+### Fixed
+- Virtual lookup/optionset name columns (e.g. `SELECT owneridname FROM account`) failed with "no readable columns" when selected on their own. Dataverse silently ignores the unknown attribute, so the `owneridname → ownerid` rewrite never fired. The tool now detects unresolved `*name` columns and re-runs once with just those rewritten to their base lookup/optionset, leaving real `*name` attributes (e.g. `fullname`) untouched. Also fixes the case where such a column was silently dropped alongside resolvable columns (`SELECT name, owneridname FROM account`).
+
 ## [1.0.2] - 2026-06-23
 
 ### Fixed
