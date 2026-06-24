@@ -215,6 +215,20 @@ describe('generateFetchXml', () => {
             expect(strip(xml)).toContain('link-type="inner"');
         });
 
+        it('emits the explicit join alias on the link-entity', () => {
+            const xml = toFetchXml(
+                'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
+            );
+            expect(strip(xml)).toContain('alias="c"');
+        });
+
+        it('defaults the link-entity alias to the table name when no alias is given', () => {
+            const xml = toFetchXml(
+                'SELECT account.name, contact.fullname FROM account INNER JOIN contact ON account.accountid = contact.parentcustomerid',
+            );
+            expect(strip(xml)).toContain('alias="contact"');
+        });
+
         it('sets from to the link-entity attribute (parentcustomerid)', () => {
             const xml = toFetchXml(
                 'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',

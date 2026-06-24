@@ -115,3 +115,39 @@ describe('column resolution — virtual lookup name recovery (issue: owneridname
         expect(unresolved.size).toBe(0);
     });
 });
+
+describe('column resolution — JOIN columns (issue: c.fullname on a joined entity)', () => {
+    it('qualifies a joined column with its link alias', () => {
+        const stmt = parseSelect(
+            'SELECT TOP 10 c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.accountid',
+        );
+        expect(getRequestedColumns(stmt)).toEqual(['c.fullname']);
+    });
+
+    it('keeps base-entity columns unprefixed while qualifying joined ones', () => {
+        const stmt = parseSelect(
+            'SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.parentcustomerid',
+        );
+        expect(getRequestedColumns(stmt)).toEqual(['name', 'c.fullname']);
+    });
+
+    it('resolves the joined column against the alias-prefixed result key', () => {
+        const stmt = parseSelect(
+            'SELECT c.fullname FROM account a INNER JOIN contact c ON a.accountid = c.accountid',
+        );
+        const requested = getRequestedColumns(stmt)!;
+        // Dataverse returns the link-entity attribute under `<alias>.<attr>`.
+        const rows = cleanRows([{ accountid: 'acc-1', 'c.fullname': 'Jane Doe' }]);
+        const allColumns = extractColumns(rows, false);
+        expect(resolveRequestedColumns(requested, allColumns, rows[0])).toEqual(['c.fullname']);
+        // Must not be treated as an unresolved virtual `*name` column.
+        expect(unresolvedVirtualColumns(requested, allColumns, rows[0]).size).toBe(0);
+    });
+
+    it('falls back to the table name as the link alias when the join has no alias', () => {
+        const stmt = parseSelect(
+            'SELECT contact.fullname FROM account INNER JOIN contact ON account.accountid = contact.parentcustomerid',
+        );
+        expect(getRequestedColumns(stmt)).toEqual(['contact.fullname']);
+    });
+});

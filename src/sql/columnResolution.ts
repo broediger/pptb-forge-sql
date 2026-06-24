@@ -86,12 +86,29 @@ export function getRequestedColumns(stmt: SelectStatement): string[] | null {
     const hasStar = stmt.columns.some((c) => !('function' in c) && c.column === '*' && !c.table);
     if (hasStar) return null; // SELECT * → show everything
 
+    const fromRef = stmt.from.alias ?? stmt.from.table;
+    // Map any join reference (table name or its alias) → the FetchXML link
+    // alias that prefixes that entity's attributes in the result rows.
+    const joinLinkAlias = new Map<string, string>();
+    for (const j of stmt.joins) {
+        const linkAlias = j.alias ?? j.table;
+        joinLinkAlias.set(j.table, linkAlias);
+        if (j.alias) joinLinkAlias.set(j.alias, linkAlias);
+    }
+
     return stmt.columns.map((c) => {
         if ('function' in c) {
             // Aggregate: use alias or auto-generated name
             return c.alias ?? `${c.function.toLowerCase()}_${c.column.column === '*' ? 'all' : c.column.column}`;
         }
-        return c.alias ?? c.column;
+        if (c.alias) return c.alias;
+        // Attributes from a joined entity come back prefixed with the link
+        // alias (e.g. contact's `fullname` under join alias `c` → `c.fullname`).
+        if (c.table && c.table !== stmt.from.table && c.table !== fromRef) {
+            const linkAlias = joinLinkAlias.get(c.table);
+            if (linkAlias) return `${linkAlias}.${c.column}`;
+        }
+        return c.column;
     });
 }
 
