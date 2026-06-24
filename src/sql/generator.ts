@@ -411,7 +411,10 @@ export function generateFetchXml(ast: SelectStatement): string {
         const joinRef = join.alias ?? join.table;
         const linkType = join.type === 'LEFT' || join.type === 'OUTER' ? 'outer' : 'inner';
         const name = xmlEscape(join.table);
-        const alias = join.alias ? ` alias="${xmlEscape(join.alias)}"` : '';
+        // Always emit an alias (default to the table name) so the joined
+        // entity's attributes come back under a deterministic `<alias>.<attr>`
+        // key instead of a Dataverse auto-generated one (e.g. `contact1.`).
+        const alias = ` alias="${xmlEscape(joinRef)}"`;
 
         // Resolve ON condition to determine from/to attributes
         // FetchXML: from = attribute on the link-entity, to = attribute on the parent entity
