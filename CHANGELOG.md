@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.4] - 2026-06-24
+
+### Fixed
+- Columns selected from a joined entity (e.g. `SELECT c.fullname FROM account a INNER JOIN contact c ON …`) failed with "no readable columns". Dataverse returns link-entity attributes under an alias-prefixed key (`c.fullname`), but the resolver looked for an unprefixed name on the base entity. Joined columns are now qualified with their link alias, and the FetchXML generator always emits a deterministic link-entity alias (defaulting to the table name) so the result keys are predictable. (#4)
+
 ## [1.0.3] - 2026-06-24
 
 ### Fixed
