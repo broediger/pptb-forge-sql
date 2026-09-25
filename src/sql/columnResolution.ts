@@ -1,4 +1,6 @@
 import type { SelectStatement } from './types';
+import { isColumnRef, isJsonValueExpr } from './types';
+import { getJsonValueColumns } from './jsonValue';
 
 // OData annotation suffixes → clean column name suffixes
 const ANNOTATION_MAP: [RegExp, string][] = [
@@ -83,7 +85,7 @@ export function extractColumns(rows: Record<string, unknown>[], isSelectStar = f
  * virtual names like owneridname) so only those are displayed.
  */
 export function getRequestedColumns(stmt: SelectStatement): string[] | null {
-    const hasStar = stmt.columns.some((c) => !('function' in c) && c.column === '*' && !c.table);
+    const hasStar = stmt.columns.some((c) => isColumnRef(c) && c.column === '*' && !c.table);
     if (hasStar) return null; // SELECT * → show everything
 
     const fromRef = stmt.from.alias ?? stmt.from.table;
@@ -96,7 +98,14 @@ export function getRequestedColumns(stmt: SelectStatement): string[] | null {
         if (j.alias) joinLinkAlias.set(j.alias, linkAlias);
     }
 
+    // JSON_VALUE columns are computed client-side under their resolved names.
+    const jsonNames = getJsonValueColumns(stmt).map((jc) => jc.name);
+    let jsonIndex = 0;
+
     return stmt.columns.map((c) => {
+        if (isJsonValueExpr(c)) {
+            return jsonNames[jsonIndex++];
+        }
         if ('function' in c) {
             // Aggregate: use alias or auto-generated name
             return c.alias ?? `${c.function.toLowerCase()}_${c.column.column === '*' ? 'all' : c.column.column}`;
@@ -192,7 +201,7 @@ export function unresolvedVirtualColumns(
 export function rewriteVirtualColumns(stmt: SelectStatement, onlyColumns?: Set<string>): SelectStatement {
     let changed = false;
     const newColumns = stmt.columns.map((col) => {
-        if ('function' in col) return col; // aggregate — skip
+        if (!isColumnRef(col)) return col; // aggregate / JSON_VALUE — skip
         if (col.column === '*') return col;
         const name = col.column;
         // If column ends with 'name' and is more than just 'name', strip it

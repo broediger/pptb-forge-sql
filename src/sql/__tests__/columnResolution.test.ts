@@ -38,7 +38,9 @@ function resolveWithRecovery(
         if (unresolved.size > 0) {
             const rewritten = rewriteVirtualColumns(stmt, unresolved);
             if (rewritten !== stmt) {
-                rewrittenTo = rewritten.columns.map((c) => ('function' in c ? c.function : c.column));
+                rewrittenTo = rewritten.columns.map((c) =>
+                    'function' in c ? c.function : 'kind' in c ? c.kind : c.column,
+                );
                 rows = cleanRows(rewrittenResponse(rewritten));
                 allColumns = extractColumns(rows, false);
                 const retryColumns = resolveRequestedColumns(requestedCols, allColumns, rows[0] ?? {});
