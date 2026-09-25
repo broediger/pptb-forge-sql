@@ -217,7 +217,7 @@ describe('JSON_VALUE column resolution', () => {
             jsonColumns,
         );
         const requested = getRequestedColumns(stmt)!;
-        const columns = resolveRequestedColumns(requested, extractColumns(rows), rows[0]);
+        const columns = resolveRequestedColumns(requested, extractColumns(rows), rows);
 
         expect(columns).toEqual(['vatTreatment']);
         expect(rows.map((r) => r.vatTreatment)).toEqual(['Privat (0%)', null]);

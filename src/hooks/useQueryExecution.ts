@@ -8,6 +8,7 @@ import {
     extractColumns,
     getRequestedColumns,
     resolveRequestedColumns,
+    displayRequestedColumns,
     unresolvedVirtualColumns,
     rewriteVirtualColumns,
 } from '../sql/columnResolution';
@@ -533,7 +534,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 const isSelectStar = requestedCols === null;
                 let allColumns = extractColumns(rows, isSelectStar);
                 let columns: string[] = requestedCols
-                    ? resolveRequestedColumns(requestedCols, allColumns, rows[0] ?? {})
+                    ? resolveRequestedColumns(requestedCols, allColumns, rows)
                     : allColumns;
 
                 // Recover virtual `xxxname` columns that Dataverse silently dropped.
@@ -544,7 +545,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 // (owneridname → ownerid) and re-run once so the formatted value
                 // comes back and resolves.
                 if (requestedCols && effectiveStmt === stmt && rows.length > 0) {
-                    const unresolved = unresolvedVirtualColumns(requestedCols, allColumns, rows[0] ?? {});
+                    const unresolved = unresolvedVirtualColumns(requestedCols, allColumns, rows);
                     if (unresolved.size > 0) {
                         const rewritten = rewriteVirtualColumns(stmt, unresolved);
                         if (rewritten !== stmt) {
@@ -553,11 +554,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                                 const retry = await runFetchXml(retryFetchXml);
                                 const retryRows = applyReverseEntityAliases(retry.rows, stmt.from.table);
                                 const retryAllColumns = extractColumns(retryRows, isSelectStar);
-                                const retryColumns = resolveRequestedColumns(
-                                    requestedCols,
-                                    retryAllColumns,
-                                    retryRows[0] ?? {},
-                                );
+                                const retryColumns = resolveRequestedColumns(requestedCols, retryAllColumns, retryRows);
                                 // Only adopt the rewrite if it actually resolved more
                                 // columns — otherwise keep the literal result so the
                                 // clear "no readable columns" error still surfaces.
@@ -597,6 +594,12 @@ export function useQueryExecution(): QueryExecutionReturn {
                     throw new Error(
                         `Query returned ${rows.length} row(s) but no readable columns for [${requested}] on '${stmt.from.table}'.${hint}`,
                     );
+                }
+
+                // Show every requested column, including ones that are null in
+                // every row (Dataverse omits nulls, so they have no result key).
+                if (requestedCols) {
+                    columns = displayRequestedColumns(requestedCols, allColumns, rows);
                 }
 
                 setState((prev) => ({
