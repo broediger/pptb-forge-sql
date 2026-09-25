@@ -14,7 +14,8 @@ import { useDmlExecution } from './hooks/useDmlExecution';
 import { useHistoryStore } from './stores/historyStore';
 import { useSchemaStore } from './stores/schemaStore';
 import { useSettingsStore } from './stores/settingsStore';
-import { exportToCsv, exportToJson } from './utils/export';
+import { exportToCsv, exportToJson, type CsvDelimiter } from './utils/export';
+import { CsvExportMenu } from './components/CsvExportMenu';
 import { useConnection, useToolboxEvents } from './hooks/useToolboxAPI';
 import { useTheme } from './hooks/useTheme';
 import { tokenize, parseStatement } from './sql';
@@ -214,6 +215,12 @@ export default function App() {
         [activeQueryTabId],
     );
 
+    // Load persisted settings at startup (not only when the Settings panel
+    // opens) so preferences like the CSV delimiter apply right away.
+    useEffect(() => {
+        useSettingsStore.getState().loadFromToolbox();
+    }, []);
+
     // Ctrl+T / Cmd+T to add a new query tab
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -345,23 +352,31 @@ export default function App() {
         }
     }, []);
 
-    const handleExportCsv = useCallback(() => {
-        if (!activeTabResults.results || exporting) return;
-        const rows = activeTabResults.results;
-        const columns = activeTabResults.columns;
-        setExporting('csv');
-        // Defer so the "Exporting…" state can paint before the blocking serialize.
-        setTimeout(() => {
-            try {
-                exportToCsv(rows, columns);
-                notify('Export complete', `CSV download started (${rows.length} rows)`);
-            } catch (err) {
-                notify('Export failed', err instanceof Error ? err.message : String(err), 'error');
-            } finally {
-                setExporting(null);
-            }
-        }, 0);
-    }, [activeTabResults.results, activeTabResults.columns, exporting, notify]);
+    const csvDelimiter = useSettingsStore((s) => s.settings.csvDelimiter);
+    const updateSetting = useSettingsStore((s) => s.updateSetting);
+
+    const handleExportCsv = useCallback(
+        (delimiter: CsvDelimiter) => {
+            if (!activeTabResults.results || exporting) return;
+            const rows = activeTabResults.results;
+            const columns = activeTabResults.columns;
+            // Remember the choice so it's marked next time
+            if (delimiter !== csvDelimiter) updateSetting('csvDelimiter', delimiter);
+            setExporting('csv');
+            // Defer so the "Exporting…" state can paint before the blocking serialize.
+            setTimeout(() => {
+                try {
+                    exportToCsv(rows, columns, delimiter);
+                    notify('Export complete', `CSV download started (${rows.length} rows)`);
+                } catch (err) {
+                    notify('Export failed', err instanceof Error ? err.message : String(err), 'error');
+                } finally {
+                    setExporting(null);
+                }
+            }, 0);
+        },
+        [activeTabResults.results, activeTabResults.columns, exporting, notify, csvDelimiter, updateSetting],
+    );
 
     const handleExportJson = useCallback(() => {
         if (!activeTabResults.results || exporting) return;
@@ -713,14 +728,13 @@ export default function App() {
                         {/* Export buttons — only in Results tab when data exists */}
                         {activeTab === 'results' && activeTabResults.results && activeTabResults.results.length > 0 && (
                             <div className="ml-auto flex items-center gap-1 pr-2">
-                                <button
-                                    onClick={handleExportCsv}
+                                <CsvExportMenu
+                                    onExport={handleExportCsv}
+                                    lastDelimiter={csvDelimiter}
+                                    exporting={exporting === 'csv'}
                                     disabled={exporting !== null}
-                                    className={`px-2.5 py-1 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-wait ${isDark ? 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
-                                    title="Export as CSV"
-                                >
-                                    {exporting === 'csv' ? 'Exporting…' : 'CSV'}
-                                </button>
+                                    isDark={isDark}
+                                />
                                 <button
                                     onClick={handleExportJson}
                                     disabled={exporting !== null}

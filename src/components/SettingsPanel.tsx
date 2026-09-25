@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { useSettingsStore } from '../stores/settingsStore';
 
 interface SettingsPanelProps {
@@ -8,14 +7,8 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({ isOpen, onClose, isDark = false }: SettingsPanelProps) {
-    const { settings, updateSetting, loadFromToolbox } = useSettingsStore();
-
-    // Load persisted settings when the panel first opens
-    useEffect(() => {
-        if (isOpen) {
-            loadFromToolbox();
-        }
-    }, [isOpen, loadFromToolbox]);
+    // Persisted settings are loaded once at app startup (App.tsx)
+    const { settings, updateSetting } = useSettingsStore();
 
     if (!isOpen) return null;
 
