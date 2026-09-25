@@ -91,6 +91,36 @@ describe('historyStore persistence', () => {
         expect(store.getState().entries).toHaveLength(2);
     });
 
+    it('does not overwrite persisted history when the load fails, and retries it on the next save', async () => {
+        settings.releaseGet();
+        settings.api.get.mockRejectedValueOnce(new Error('host not ready'));
+        const store = await loadStore();
+        await store.getState().loadFromSettings();
+        expect(store.getState().entries).toHaveLength(0);
+
+        // First save retries the load, which now succeeds and merges
+        store.getState().addEntry({ sql: 'select new', timestamp: 2 });
+        await flush();
+        await flush();
+
+        expect(settings.api.get).toHaveBeenCalledTimes(2);
+        expect((settings.data.queryHistory as QueryHistoryEntry[]).map((e) => e.sql)).toEqual([
+            'select new',
+            'select 1',
+            'select 2',
+        ]);
+    });
+
+    it('skips saving while the settings API cannot be read', async () => {
+        vi.stubGlobal('window', { toolboxAPI: { settings: { set: settings.api.set } } });
+        const store = await loadStore();
+        store.getState().addEntry({ sql: 'select new', timestamp: 2 });
+        await flush();
+
+        expect(settings.api.set).not.toHaveBeenCalled();
+        expect(store.getState().entries.map((e) => e.sql)).toEqual(['select new']);
+    });
+
     it('keeps pinned entries and caps unpinned ones at 100 after merging', async () => {
         const many = Array.from({ length: 100 }, (_, i) => stored(`old-${i}`, `select ${i}`));
         settings.data.queryHistory = [stored('pin', 'pinned', { pinned: true }), ...many];

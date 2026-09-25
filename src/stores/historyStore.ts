@@ -33,48 +33,16 @@ function trimEntries(entries: QueryHistoryEntry[]): QueryHistoryEntry[] {
 }
 
 // Stored history is loaded once per session. Saves wait for it, so a query run
-// before the load completes can't overwrite the persisted history.
-let loadPromise: Promise<void> | null = null;
+// before the load completes can't overwrite the persisted history. A failed
+// load isn't cached: the next save retries it, and skips writing if it still
+// fails, rather than replacing the stored history with this session's entries.
+let loadPromise: Promise<boolean> | null = null;
 
-export const useHistoryStore = create<HistoryStore>((set, get) => ({
-    entries: [],
-
-    addEntry: (entry) => {
-        const newEntry: QueryHistoryEntry = {
-            ...entry,
-            id: crypto.randomUUID(),
-        };
-
-        set((state) => ({ entries: trimEntries([newEntry, ...state.entries]) }));
-
-        get().saveToSettings();
-    },
-
-    removeEntry: (id) => {
-        set((state) => ({
-            entries: state.entries.filter((e) => e.id !== id),
-        }));
-        get().saveToSettings();
-    },
-
-    togglePin: (id) => {
-        set((state) => ({
-            entries: state.entries.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e)),
-        }));
-        get().saveToSettings();
-    },
-
-    clearHistory: () => {
-        set((state) => ({
-            entries: state.entries.filter((e) => e.pinned),
-        }));
-        get().saveToSettings();
-    },
-
-    loadFromSettings: () => {
+export const useHistoryStore = create<HistoryStore>((set, get) => {
+    const ensureLoaded = (): Promise<boolean> => {
         loadPromise ??= (async () => {
             try {
-                if (!window.toolboxAPI?.settings?.get) return;
+                if (!window.toolboxAPI?.settings?.get) return false;
                 const stored = await window.toolboxAPI.settings.get('queryHistory');
                 if (Array.isArray(stored)) {
                     // Merge rather than replace: entries added this session
@@ -85,21 +53,65 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
                         return { entries: trimEntries([...state.entries, ...persisted]) };
                     });
                 }
+                return true;
+            } catch {
+                return false;
+            }
+        })().then((ok) => {
+            if (!ok) loadPromise = null;
+            return ok;
+        });
+        return loadPromise;
+    };
+
+    return {
+        entries: [],
+
+        addEntry: (entry) => {
+            const newEntry: QueryHistoryEntry = {
+                ...entry,
+                id: crypto.randomUUID(),
+            };
+
+            set((state) => ({ entries: trimEntries([newEntry, ...state.entries]) }));
+
+            get().saveToSettings();
+        },
+
+        removeEntry: (id) => {
+            set((state) => ({
+                entries: state.entries.filter((e) => e.id !== id),
+            }));
+            get().saveToSettings();
+        },
+
+        togglePin: (id) => {
+            set((state) => ({
+                entries: state.entries.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e)),
+            }));
+            get().saveToSettings();
+        },
+
+        clearHistory: () => {
+            set((state) => ({
+                entries: state.entries.filter((e) => e.pinned),
+            }));
+            get().saveToSettings();
+        },
+
+        loadFromSettings: async () => {
+            await ensureLoaded();
+        },
+
+        saveToSettings: async () => {
+            if (!(await ensureLoaded())) return;
+            try {
+                if (!window.toolboxAPI?.settings?.set) return;
+                const { entries } = get();
+                await window.toolboxAPI.settings.set('queryHistory', entries);
             } catch {
                 // Settings API unavailable or failed — silently ignore
             }
-        })();
-        return loadPromise;
-    },
-
-    saveToSettings: async () => {
-        await get().loadFromSettings();
-        try {
-            if (!window.toolboxAPI?.settings?.set) return;
-            const { entries } = get();
-            await window.toolboxAPI.settings.set('queryHistory', entries);
-        } catch {
-            // Settings API unavailable or failed — silently ignore
-        }
-    },
-}));
+        },
+    };
+});
