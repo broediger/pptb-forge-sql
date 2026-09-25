@@ -31,7 +31,11 @@ export function SettingsPanel({ isOpen, onClose, isDark = false }: SettingsPanel
     const dividerClass = isDark ? 'border-neutral-700' : 'border-gray-200';
 
     return (
-        <div className={`fixed inset-0 z-50 flex items-center justify-center ${overlayClass}`}>
+        <div
+            role="dialog"
+            aria-modal="true"
+            className={`fixed inset-0 z-50 flex items-center justify-center ${overlayClass}`}
+        >
             <div className={`rounded-lg shadow-xl w-full max-w-md mx-4 p-5 ${dialogClass}`}>
                 {/* Header */}
                 <div className="flex items-center justify-between mb-5">
