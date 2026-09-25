@@ -92,6 +92,12 @@ export default function App() {
     const addEntry = useHistoryStore((s) => s.addEntry);
     const resetSchema = useSchemaStore((s) => s.reset);
 
+    // Load persisted query history at startup, not when the History tab first
+    // opens, so queries run before then are merged into it instead of replacing it.
+    useEffect(() => {
+        useHistoryStore.getState().loadFromSettings();
+    }, []);
+
     // Sync query execution state into the TAB THAT STARTED the execution (not the currently active tab)
     useEffect(() => {
         if (queryExec.results !== null || queryExec.error !== null || queryExec.fetchXml !== null) {

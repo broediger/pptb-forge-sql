@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useHistoryStore, type QueryHistoryEntry } from '../stores/historyStore';
 
 interface QueryHistoryProps {
@@ -156,16 +156,10 @@ function HistoryEntryRow({
 
 export function QueryHistory({ onSelectQuery, isDark = false }: QueryHistoryProps) {
     const entries = useHistoryStore((s) => s.entries);
-    const loadFromSettings = useHistoryStore((s) => s.loadFromSettings);
     const togglePin = useHistoryStore((s) => s.togglePin);
     const removeEntry = useHistoryStore((s) => s.removeEntry);
     const clearHistory = useHistoryStore((s) => s.clearHistory);
     const [search, setSearch] = useState('');
-
-    useEffect(() => {
-        loadFromSettings();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
 
     const sorted = useMemo(() => {
         const filtered = entries.filter((e) =>
