@@ -21,6 +21,21 @@ interface HistoryStore {
     saveToSettings: () => Promise<void>;
 }
 
+const MAX_ENTRIES = 100;
+
+// Keep all pinned entries + fill the remaining slots up to MAX_ENTRIES with the
+// newest unpinned ones (entries are ordered newest first).
+function trimEntries(entries: QueryHistoryEntry[]): QueryHistoryEntry[] {
+    const pinned = entries.filter((e) => e.pinned);
+    const unpinned = entries.filter((e) => !e.pinned);
+    const maxUnpinned = Math.max(0, MAX_ENTRIES - pinned.length);
+    return [...pinned, ...unpinned.slice(0, maxUnpinned)];
+}
+
+// Stored history is loaded once per session. Saves wait for it, so a query run
+// before the load completes can't overwrite the persisted history.
+let loadPromise: Promise<void> | null = null;
+
 export const useHistoryStore = create<HistoryStore>((set, get) => ({
     entries: [],
 
@@ -30,15 +45,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
             id: crypto.randomUUID(),
         };
 
-        set((state) => {
-            const updated = [newEntry, ...state.entries];
-            const pinned = updated.filter((e) => e.pinned);
-            const unpinned = updated.filter((e) => !e.pinned);
-            // Keep all pinned + fill remaining slots up to 100 with unpinned
-            const maxUnpinned = Math.max(0, 100 - pinned.length);
-            const trimmed = [...pinned, ...unpinned.slice(0, maxUnpinned)];
-            return { entries: trimmed };
-        });
+        set((state) => ({ entries: trimEntries([newEntry, ...state.entries]) }));
 
         get().saveToSettings();
     },
@@ -64,19 +71,29 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         get().saveToSettings();
     },
 
-    loadFromSettings: async () => {
-        try {
-            if (!window.toolboxAPI?.settings?.get) return;
-            const stored = await window.toolboxAPI.settings.get('queryHistory');
-            if (Array.isArray(stored)) {
-                set({ entries: stored as QueryHistoryEntry[] });
+    loadFromSettings: () => {
+        loadPromise ??= (async () => {
+            try {
+                if (!window.toolboxAPI?.settings?.get) return;
+                const stored = await window.toolboxAPI.settings.get('queryHistory');
+                if (Array.isArray(stored)) {
+                    // Merge rather than replace: entries added this session
+                    // (newer) stay on top of the persisted ones.
+                    set((state) => {
+                        const sessionIds = new Set(state.entries.map((e) => e.id));
+                        const persisted = (stored as QueryHistoryEntry[]).filter((e) => !sessionIds.has(e.id));
+                        return { entries: trimEntries([...state.entries, ...persisted]) };
+                    });
+                }
+            } catch {
+                // Settings API unavailable or failed — silently ignore
             }
-        } catch {
-            // Settings API unavailable or failed — silently ignore
-        }
+        })();
+        return loadPromise;
     },
 
     saveToSettings: async () => {
+        await get().loadFromSettings();
         try {
             if (!window.toolboxAPI?.settings?.set) return;
             const { entries } = get();
