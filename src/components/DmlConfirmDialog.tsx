@@ -43,7 +43,11 @@ export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = f
             : [];
 
     return (
-        <div className={`fixed inset-0 z-50 flex items-center justify-center ${overlayClass}`}>
+        <div
+            role="dialog"
+            aria-modal="true"
+            className={`fixed inset-0 z-50 flex items-center justify-center ${overlayClass}`}
+        >
             <div className={`rounded-lg shadow-xl w-full max-w-lg mx-4 p-5 ${dialogClass}`}>
                 {/* Header */}
                 <div className="flex items-center gap-3 mb-4">

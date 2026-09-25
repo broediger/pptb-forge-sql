@@ -103,6 +103,21 @@ export function SqlEditor({
         onExecuteRef.current(sql.trim());
     }, []);
 
+    // F5 → Execute, like SSMS / SQL 4 CDS. Handled on window (capture phase) so
+    // it works wherever focus is, and so the host never sees F5 as a reload.
+    // Ignored while a modal dialog (DML confirmation, settings) is open.
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== 'F5' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.repeat || document.querySelector('[aria-modal="true"]')) return;
+            handleExecute();
+        };
+        window.addEventListener('keydown', handleKeyDown, true);
+        return () => window.removeEventListener('keydown', handleKeyDown, true);
+    }, [handleExecute]);
+
     const handleMount: OnMount = (editor, monaco) => {
         internalEditorRef.current = editor;
         if (externalEditorRef) externalEditorRef.current = editor;
@@ -138,7 +153,7 @@ export function SqlEditor({
                 <button
                     onClick={handleExecute}
                     className="flex items-center gap-1.5 bg-green-600 hover:bg-green-500 active:bg-green-700 text-white text-sm font-medium px-3 py-1.5 rounded transition-colors"
-                    title="Run query (Ctrl+Enter / Cmd+Enter)"
+                    title="Run query (F5 / Ctrl+Enter / Cmd+Enter)"
                 >
                     <span className="text-base leading-none">▶</span>
                     <span>Run</span>
@@ -180,7 +195,7 @@ export function SqlEditor({
                 )}
 
                 <span className={`text-xs ml-auto ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
-                    Ctrl+Enter to execute
+                    F5 or Ctrl+Enter to execute
                 </span>
             </div>
             <Editor
