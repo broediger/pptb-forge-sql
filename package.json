@@ -1,6 +1,6 @@
 {
     "name": "pptb-forge-sql",
-    "version": "1.0.4",
+    "version": "1.1.0",
     "displayName": "Forge SQL",
     "description": "Write and execute SQL against Dataverse — SELECT, INSERT, UPDATE, and DELETE. Translates to FetchXML and Web API calls.",
     "main": "index.html",

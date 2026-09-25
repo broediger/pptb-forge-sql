@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.0] - 2026-09-25
+
+### Added
+- `JSON_VALUE(column, '$.path')` in the SELECT list extracts values from JSON stored in text columns, e.g. `SELECT JSON_VALUE(data, '$.Lead.meteringPoints[0].postal') AS postal FROM …`. Supports `.key`, `."quoted key"` and `[n]` paths with SQL Server's lax semantics: a missing path, invalid JSON, or an object/array result returns NULL. Works on joined columns. Not supported in WHERE or ORDER BY, or together with aggregates, GROUP BY or DISTINCT. (#10)
+- `IN (SELECT …)` and `NOT IN (SELECT …)` subqueries in WHERE, e.g. `WHERE regardingid IN (SELECT leadid FROM lead WHERE statecode = 0)`. The subquery runs first and its values become a literal IN list, so it works regardless of column types (e.g. a text column against a GUID). Subqueries can be nested; lists over 250 values are split across several queries and the results merged. (#18)
+- CSV export asks for the delimiter: Comma, or Semicolon for Excel in regions that use a decimal comma. In semicolon mode numbers are written with a decimal comma (`1,5`). The last choice is remembered. (#7, #11)
+- CSV files now start with a UTF-8 byte-order mark, so Excel shows characters like ä, ß and ñ correctly. (#11)
+- F5 runs the query (the selection, or the statement at the cursor), like Ctrl+Enter. (#6, #12)
+
+### Fixed
+- Query history was lost between sessions when a query ran before the History tab was opened. History now loads at startup and merges with the current session instead of being overwritten. (#8, #9)
+- Settings are now loaded at startup, so saved preferences apply immediately instead of only after opening the Settings panel. A setting changed while settings were still loading can no longer overwrite the saved ones. (#11)
+- Name columns from a joined table (e.g. `SELECT l.statuscodename FROM … JOIN lead l …`, or a lookup's `…name`) returned no column. (#13)
+- A column that was empty in the first result row disappeared from the results, even when later rows had values. Requested columns are now always shown; columns that are empty in every row show as empty. (#14)
+- After "Load more", the grid showed hidden helper columns (e.g. `…_formatted`) and ignored the columns selected in the query. It now keeps the first page's columns. (#10)
+- `public/icon.svg` is now committed, so clean builds include the tool icon. (#15)
+
 ## [1.0.4] - 2026-06-24
 
 ### Fixed
