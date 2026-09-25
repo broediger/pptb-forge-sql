@@ -153,6 +153,15 @@ export interface InExpr {
     negated?: boolean;
 }
 
+// col [NOT] IN (SELECT single_column FROM ...). FetchXML has no subqueries, so
+// the subquery is run first and its values are inlined as a plain IN list.
+export interface InSubqueryExpr {
+    kind: 'in_subquery';
+    column: ColumnRef;
+    subquery: SelectStatement;
+    negated?: boolean;
+}
+
 export interface IsNullExpr {
     kind: 'is_null';
     column: ColumnRef;
@@ -170,7 +179,7 @@ export interface NotExpr {
     expr: WhereExpr;
 }
 
-export type WhereExpr = ComparisonExpr | BetweenExpr | InExpr | IsNullExpr | LogicalExpr | NotExpr;
+export type WhereExpr = ComparisonExpr | BetweenExpr | InExpr | InSubqueryExpr | IsNullExpr | LogicalExpr | NotExpr;
 
 export type LiteralValue = string | number | boolean | null;
 

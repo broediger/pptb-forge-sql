@@ -79,6 +79,16 @@ function resolveConditionLeft(left: ColumnRef | AggregateExpr): {
 
 // ── WHERE → filter XML ──
 
+// IN (SELECT …) is resolved to a literal IN list by the query runner before
+// generation; reaching the generator means it appeared where that isn't done.
+function unresolvedSubqueryError(): SqlParseError {
+    return new SqlParseError(
+        'Subqueries (IN (SELECT ...)) are only supported in the WHERE clause of a SELECT statement',
+        0,
+        0,
+    );
+}
+
 function generateCondition(expr: WhereExpr, indent: string, aggregateAliasMap?: Map<string, string>): string {
     switch (expr.kind) {
         case 'comparison': {
@@ -117,6 +127,9 @@ function generateCondition(expr: WhereExpr, indent: string, aggregateAliasMap?: 
             const val = xmlEscape(literalToString(right as LiteralValue));
             return `${indent}<condition attribute="${attr}"${entityAttr} operator="${op}" value="${val}" />`;
         }
+
+        case 'in_subquery':
+            throw unresolvedSubqueryError();
 
         case 'is_null': {
             const attr = xmlEscape(expr.column.column);
@@ -208,6 +221,9 @@ function generateNegated(expr: WhereExpr, indent: string, aggregateAliasMap?: Ma
             const val = xmlEscape(literalToString(right as LiteralValue));
             return `${indent}<condition attribute="${attr}"${entityAttr} operator="${op}" value="${val}" />`;
         }
+
+        case 'in_subquery':
+            throw unresolvedSubqueryError();
 
         case 'is_null': {
             const attr = xmlEscape(expr.column.column);
