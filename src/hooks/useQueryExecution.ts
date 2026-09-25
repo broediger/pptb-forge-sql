@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { tokenize, parseStatement, generateFetchXml, SqlParseError } from '../sql';
 import type { SelectStatement, WhereExpr, ColumnRef, AggregateExpr } from '../sql/types';
-import { isAggregateExpr } from '../sql/types';
+import { isAggregateExpr, isJsonValueExpr } from '../sql/types';
+import { getJsonValueColumns, applyJsonValues, type JsonValueColumn } from '../sql/jsonValue';
 import {
     cleanRows,
     extractColumns,
@@ -106,7 +107,7 @@ function applyEntityAliases(stmt: SelectStatement): SelectStatement {
     if (!aliases) return stmt;
 
     const columns = stmt.columns.map((col) => {
-        if ('function' in col) {
+        if ('function' in col || isJsonValueExpr(col)) {
             return { ...col, column: mapColumnRef(col.column, aliases) };
         }
         return mapColumnRef(col, aliases);
@@ -163,6 +164,8 @@ function isSimpleGroupByCount(stmt: SelectStatement): { groupColumn: ColumnRef; 
         if (isAggregateExpr(c)) {
             if (c.function !== 'COUNT' || c.column.column !== '*' || c.distinct) return null;
             aggregate = c;
+        } else if (isJsonValueExpr(c)) {
+            return null;
         } else if (c.column === groupBy.column && (c.table ?? null) === (groupBy.table ?? null)) {
             groupColumn = c;
         } else {
@@ -212,6 +215,8 @@ export function useQueryExecution(): QueryExecutionReturn {
 
     const pageRef = useRef<number>(1);
     const generationRef = useRef<number>(0);
+    // JSON_VALUE columns of the current query, applied to every fetched page.
+    const jsonColumnsRef = useRef<JsonValueColumn[]>([]);
 
     const runFetchXml = useCallback(
         async (fetchXml: string): Promise<{ rows: Record<string, unknown>[]; pagingCookie: string | null }> => {
@@ -220,7 +225,7 @@ export function useQueryExecution(): QueryExecutionReturn {
             }
 
             const result = await window.dataverseAPI.fetchXmlQuery(fetchXml);
-            const rows = cleanRows(result.value ?? []);
+            const rows = applyJsonValues(cleanRows(result.value ?? []), jsonColumnsRef.current);
             const pagingCookie = (result[PAGING_COOKIE_KEY] as string | undefined) ?? null;
             return { rows, pagingCookie };
         },
@@ -374,6 +379,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 if (stmt.type !== 'select') {
                     throw new Error('This is a DML statement. Use the DML execution path.');
                 }
+                jsonColumnsRef.current = getJsonValueColumns(stmt);
                 // Capture originally requested columns before any rewriting
                 const requestedCols = getRequestedColumns(stmt);
                 // Try the user's literal column names first. `rewriteVirtualColumns`
@@ -699,7 +705,9 @@ export function useQueryExecution(): QueryExecutionReturn {
 
             const allResults = [...snapshotResults, ...rows];
 
-            const columns = allResults.length > 0 ? extractColumns(allResults) : snapshotColumns;
+            // Keep page 1's resolved columns so explicit selections (and the
+            // raw source columns behind JSON_VALUE) stay hidden when paging.
+            const columns = snapshotColumns.length > 0 ? snapshotColumns : extractColumns(allResults);
 
             setState((prev) => ({
                 ...prev,

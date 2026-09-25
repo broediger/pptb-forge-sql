@@ -37,6 +37,7 @@ const SQL_KEYWORDS = [
     'AVG',
     'MIN',
     'MAX',
+    'JSON_VALUE',
     'INSERT',
     'INTO',
     'VALUES',

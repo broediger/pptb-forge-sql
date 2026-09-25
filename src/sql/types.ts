@@ -90,10 +90,27 @@ export interface AggregateExpr {
     alias?: string;
 }
 
-export type SelectExpr = ColumnRef | AggregateExpr;
+// JSON_VALUE(column, '$.path') — Dataverse can't evaluate this, so the
+// generator fetches the underlying column and the value is extracted client-side.
+export interface JsonValueExpr {
+    kind: 'json_value';
+    column: ColumnRef;
+    path: string;
+    alias?: string;
+}
+
+export type SelectExpr = ColumnRef | AggregateExpr | JsonValueExpr;
 
 export function isAggregateExpr(expr: SelectExpr): expr is AggregateExpr {
     return 'function' in expr;
+}
+
+export function isJsonValueExpr(expr: SelectExpr): expr is JsonValueExpr {
+    return 'kind' in expr && expr.kind === 'json_value';
+}
+
+export function isColumnRef(expr: SelectExpr): expr is ColumnRef {
+    return !isAggregateExpr(expr) && !isJsonValueExpr(expr);
 }
 
 export interface FromClause {

@@ -24,7 +24,9 @@ import {
     NotExpr,
     LiteralValue,
     OrderByItem,
+    JsonValueExpr,
 } from './types';
+import { parseJsonPath, JsonPathError } from './jsonValue';
 
 const AGGREGATE_FUNCTIONS: TokenType[] = [TokenType.COUNT, TokenType.SUM, TokenType.AVG, TokenType.MIN, TokenType.MAX];
 
@@ -169,6 +171,16 @@ function makeWalker(tokens: Token[]) {
         );
     }
 
+    // JSON_VALUE is not a keyword (it's a valid identifier elsewhere), so detect
+    // it by name when immediately followed by '('.
+    function isJsonValueCall(): boolean {
+        return (
+            peek().type === TokenType.IDENTIFIER &&
+            peek().value.toUpperCase() === 'JSON_VALUE' &&
+            peek(1).type === TokenType.LPAREN
+        );
+    }
+
     // Parse a possibly-dotted identifier: [table.]column
     function parseColumnRef(): ColumnRef {
         const first = expectIdentifierOrKeyword();
@@ -196,6 +208,11 @@ function makeWalker(tokens: Token[]) {
             const expr = parseWhereOr();
             expect(TokenType.RPAREN);
             return expr;
+        }
+
+        if (isJsonValueCall()) {
+            const t = peek();
+            throw new SqlParseError('JSON_VALUE is only supported in the SELECT list', t.line, t.column);
         }
 
         if (AGGREGATE_FUNCTIONS.includes(peek().type)) {
@@ -352,6 +369,7 @@ function makeWalker(tokens: Token[]) {
         parseLiteral,
         parseColumnRef,
         parseWhereOr,
+        isJsonValueCall,
     };
 }
 
@@ -359,7 +377,8 @@ function makeWalker(tokens: Token[]) {
 
 function parseSelect(tokens: Token[]): SelectStatement {
     const w = makeWalker(tokens);
-    const { peek, advance, check, expect, expectIdentifierOrKeyword, parseColumnRef, parseWhereOr } = w;
+    const { peek, advance, check, expect, expectIdentifierOrKeyword, parseColumnRef, parseWhereOr, isJsonValueCall } =
+        w;
 
     function parseOptionalAlias(): string | undefined {
         if (check(TokenType.AS)) {
@@ -394,6 +413,37 @@ function parseSelect(tokens: Token[]): SelectStatement {
             const agg: AggregateExpr = { function: fnName, column: col, alias };
             if (distinct) agg.distinct = true;
             return agg;
+        }
+
+        if (isJsonValueCall()) {
+            advance(); // JSON_VALUE
+            expect(TokenType.LPAREN);
+            const column = parseColumnRef();
+            if (column.column === '*') {
+                const t = peek();
+                throw new SqlParseError('JSON_VALUE expects a column, not *', t.line, t.column);
+            }
+            expect(TokenType.COMMA);
+            const pathToken = peek();
+            if (pathToken.type !== TokenType.STRING) {
+                throw new SqlParseError(
+                    `Expected JSON path string (e.g. '$.property') but got '${pathToken.value || pathToken.type}'`,
+                    pathToken.line,
+                    pathToken.column,
+                );
+            }
+            advance();
+            try {
+                parseJsonPath(pathToken.value);
+            } catch (e) {
+                if (e instanceof JsonPathError) throw new SqlParseError(e.message, pathToken.line, pathToken.column);
+                throw e;
+            }
+            expect(TokenType.RPAREN);
+            const expr: JsonValueExpr = { kind: 'json_value', column, path: pathToken.value };
+            const alias = parseOptionalAlias();
+            if (alias) expr.alias = alias;
+            return expr;
         }
 
         if (check(TokenType.STAR)) {

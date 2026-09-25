@@ -7,7 +7,10 @@ import {
     LiteralValue,
     SqlParseError,
     isAggregateExpr,
+    isColumnRef,
+    isJsonValueExpr,
 } from './types';
+import { getJsonValueColumns } from './jsonValue';
 
 // ── XML escaping ──
 
@@ -333,6 +336,50 @@ export function generateFetchXml(ast: SelectStatement): string {
     // Check if any column is an aggregate expression
     const hasAggregate = ast.columns.some(isAggregateExpr);
 
+    // JSON_VALUE is evaluated client-side on each returned row, which doesn't
+    // work once Dataverse has already collapsed rows via aggregation or DISTINCT.
+    if (ast.columns.some(isJsonValueExpr)) {
+        if (hasAggregate || ast.groupBy) {
+            throw new SqlParseError('JSON_VALUE cannot be combined with aggregates or GROUP BY', 0, 0);
+        }
+        if (ast.distinct) {
+            throw new SqlParseError('JSON_VALUE cannot be combined with SELECT DISTINCT', 0, 0);
+        }
+        // The extracted value only exists client-side, so Dataverse can't sort on it.
+        const jsonNames = new Set(getJsonValueColumns(ast).map((jc) => jc.name.toLowerCase()));
+        const jsonOrder = ast.orderBy?.find((o) => !o.column.table && jsonNames.has(o.column.column.toLowerCase()));
+        if (jsonOrder) {
+            throw new SqlParseError(
+                `ORDER BY on the JSON_VALUE column '${jsonOrder.column.column}' is not supported (the value is extracted after the query runs)`,
+                0,
+                0,
+            );
+        }
+    }
+
+    // Replace each JSON_VALUE with a fetch of its underlying column, unless that
+    // column is already selected as-is.
+    const refKey = (c: ColumnRef) => `${c.table ?? ''}.${c.column}`;
+    const plainSelected = new Set(
+        ast.columns
+            .filter(isColumnRef)
+            .filter((c) => !c.alias)
+            .map(refKey),
+    );
+    const selectColumns: SelectExpr[] = [];
+    for (const col of ast.columns) {
+        if (!isJsonValueExpr(col)) {
+            selectColumns.push(col);
+            continue;
+        }
+        const source: ColumnRef = col.column.table
+            ? { table: col.column.table, column: col.column.column }
+            : { column: col.column.column };
+        if (plainSelected.has(refKey(source))) continue;
+        plainSelected.add(refKey(source));
+        selectColumns.push(source);
+    }
+
     // <fetch> opening tag
     const fetchAttrs: string[] = [];
     if (ast.top !== undefined) fetchAttrs.push(`top="${ast.top}"`);
@@ -354,7 +401,7 @@ export function generateFetchXml(ast: SelectStatement): string {
     const joinColumnMap = new Map<string, SelectExpr[]>();
     const mainColumns: SelectExpr[] = [];
 
-    for (const col of ast.columns) {
+    for (const col of selectColumns) {
         if (isAggregateExpr(col)) {
             const tableRef = col.column.table;
             if (tableRef && tableRef !== ast.from.table && tableRef !== fromAlias) {
