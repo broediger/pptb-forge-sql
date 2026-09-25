@@ -152,4 +152,48 @@ describe('column resolution — JOIN columns (issue: c.fullname on a joined enti
         );
         expect(getRequestedColumns(stmt)).toEqual(['contact.fullname']);
     });
+
+    it('recovers an optionset name column on a joined entity', () => {
+        // `l.evn_flussrichtungcodename`: Dataverse silently drops the unknown
+        // attribute on the link-entity; after rewriting to the base column the
+        // formatted value comes back under `l.evn_flussrichtungcode`.
+        const { columns, rewrittenTo } = resolveWithRecovery(
+            'SELECT l.fullname, l.evn_flussrichtungcodename FROM orb_automatelogs logs JOIN lead l ON logs.orb_primaryregardingguid = l.leadid',
+            [{ 'l.fullname': 'Sandra Kabinger' }],
+            () => [
+                {
+                    'l.fullname': 'Sandra Kabinger',
+                    'l.evn_flussrichtungcode': 790530001,
+                    'l.evn_flussrichtungcode@OData.Community.Display.V1.FormattedValue': 'Einspeisung',
+                },
+            ],
+        );
+        expect(rewrittenTo).toEqual(['fullname', 'evn_flussrichtungcode']);
+        expect(columns).toEqual(['l.fullname', 'l.evn_flussrichtungcodename']);
+    });
+
+    it('recovers a lookup name column on a joined entity', () => {
+        const { columns, rewrittenTo } = resolveWithRecovery(
+            'SELECT a.name, c.parentcustomeridname FROM account a JOIN contact c ON a.accountid = c.parentcustomerid',
+            [{ name: 'Fourth Coffee' }],
+            () => [
+                {
+                    name: 'Fourth Coffee',
+                    'c.parentcustomerid': 'acc-guid-1',
+                    'c.parentcustomerid@OData.Community.Display.V1.FormattedValue': 'Fourth Coffee',
+                },
+            ],
+        );
+        expect(rewrittenTo).toEqual(['name', 'parentcustomerid']);
+        expect(columns).toEqual(['name', 'c.parentcustomeridname']);
+    });
+
+    it('rewrites only the joined name column, not a same-named base column', () => {
+        // `statuscodename` resolves on the base entity; only the joined one is unresolved.
+        const stmt = parseSelect(
+            'SELECT statuscodename, c.statuscodename FROM account a JOIN contact c ON a.accountid = c.parentcustomerid',
+        );
+        const rewritten = rewriteVirtualColumns(stmt, new Set(['c.statuscodename']));
+        expect(rewritten.columns).toEqual([{ column: 'statuscodename' }, { table: 'c', column: 'statuscode' }]);
+    });
 });

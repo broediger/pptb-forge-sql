@@ -194,18 +194,22 @@ export function unresolvedVirtualColumns(
  *   owneridname  → ownerid  (lookup display name)
  *   statuscodename → statuscode (optionset label)
  *
- * When `onlyColumns` is provided, only those exact column names are rewritten —
- * used to rewrite just the virtual names that failed to resolve, leaving real
- * `*name` attributes (e.g. `fullname`) untouched.
+ * When `onlyColumns` is provided, only those columns are rewritten — used to
+ * rewrite just the virtual names that failed to resolve, leaving real `*name`
+ * attributes (e.g. `fullname`) untouched. Names are matched as
+ * `getRequestedColumns` reports them, so a joined entity's column is matched as
+ * `<link alias>.<column>` (e.g. `l.statuscodename`).
  */
 export function rewriteVirtualColumns(stmt: SelectStatement, onlyColumns?: Set<string>): SelectStatement {
+    const requested = onlyColumns ? getRequestedColumns(stmt) : null;
     let changed = false;
-    const newColumns = stmt.columns.map((col) => {
+    const newColumns = stmt.columns.map((col, i) => {
         if (!isColumnRef(col)) return col; // aggregate / JSON_VALUE — skip
         if (col.column === '*') return col;
         const name = col.column;
+        const matchName = col.alias ? name : (requested?.[i] ?? name);
         // If column ends with 'name' and is more than just 'name', strip it
-        if (name.length > 4 && name.endsWith('name') && (!onlyColumns || onlyColumns.has(name))) {
+        if (name.length > 4 && name.endsWith('name') && (!onlyColumns || onlyColumns.has(matchName))) {
             const base = name.slice(0, -4); // e.g. owneridname → ownerid
             changed = true;
             return { ...col, column: base };
