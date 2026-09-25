@@ -12,6 +12,17 @@ import {
     unresolvedVirtualColumns,
     rewriteVirtualColumns,
 } from '../sql/columnResolution';
+import {
+    collectSubqueries,
+    validateSubquery,
+    subqueryScanStatement,
+    extractSubqueryValues,
+    planQueries,
+    sortRows,
+    IN_CHUNK_SIZE,
+    MAX_SUBQUERY_ROWS,
+} from '../sql/subquery';
+import type { InSubqueryExpr, LiteralValue } from '../sql/types';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -61,6 +72,7 @@ function mapWhere(expr: WhereExpr, aliases: Record<string, string>): WhereExpr {
                 : { ...expr, left: mapColumnRef(expr.left as ColumnRef, aliases) };
         case 'between':
         case 'in':
+        case 'in_subquery':
         case 'is_null':
             return { ...expr, column: mapColumnRef(expr.column, aliases) };
         case 'and':
@@ -354,6 +366,65 @@ export function useQueryExecution(): QueryExecutionReturn {
         [],
     );
 
+    /**
+     * Read every page of a query. Used for subquery values and for split
+     * queries, where the results must be complete before they're merged.
+     */
+    const fetchAllRows = useCallback(
+        async (stmt: SelectStatement): Promise<{ rows: Record<string, unknown>[]; fetchXml: string }> => {
+            // Paging cookies need a stable order; TOP queries return one page.
+            const needsOrder = !stmt.orderBy && !stmt.distinct && stmt.top === undefined;
+            const scanStmt: SelectStatement = needsOrder
+                ? { ...stmt, orderBy: [{ column: { column: `${stmt.from.table}id` }, direction: 'ASC' }] }
+                : stmt;
+            const fetchXml = generateFetchXml(applyEntityAliases(scanStmt));
+            const rows: Record<string, unknown>[] = [];
+            let page = 1;
+            let pagingCookie: string | null = null;
+            while (true) {
+                const xml = page === 1 ? fetchXml : injectPagingIntoFetchXml(fetchXml, pagingCookie!, page);
+                const result = await runFetchXml(xml);
+                rows.push(...applyReverseEntityAliases(result.rows, stmt.from.table));
+                if (rows.length > MAX_SUBQUERY_ROWS) {
+                    throw new Error(
+                        `A subquery read more than ${MAX_SUBQUERY_ROWS.toLocaleString()} rows from '${stmt.from.table}'. Add filters to narrow it.`,
+                    );
+                }
+                pagingCookie = result.pagingCookie;
+                if (!pagingCookie || result.rows.length === 0 || stmt.top !== undefined) break;
+                page += 1;
+            }
+            return { rows, fetchXml };
+        },
+        [runFetchXml],
+    );
+
+    /**
+     * Resolve `IN (SELECT …)` subqueries (including nested ones) to literal IN
+     * lists. Returns the statement to run, or several when a long list had to
+     * be split across queries.
+     */
+    const expandSubqueries = useCallback(
+        async (stmt: SelectStatement): Promise<SelectStatement[]> => {
+            const expand = async (s: SelectStatement): Promise<SelectStatement[]> => {
+                const subqueries = collectSubqueries(s.where);
+                if (subqueries.length === 0) return [s];
+                const values = new Map<InSubqueryExpr, LiteralValue[]>();
+                for (const sub of subqueries) {
+                    validateSubquery(sub.subquery);
+                    const rows: Record<string, unknown>[] = [];
+                    for (const scan of await expand(subqueryScanStatement(sub.subquery))) {
+                        rows.push(...(await fetchAllRows(scan)).rows);
+                    }
+                    values.set(sub, extractSubqueryValues(rows, sub.subquery));
+                }
+                return planQueries(s, values);
+            };
+            return expand(stmt);
+        },
+        [fetchAllRows],
+    );
+
     const execute = useCallback(
         async (sql: string): Promise<ExecuteResult> => {
             setState((prev) => ({
@@ -376,11 +447,66 @@ export function useQueryExecution(): QueryExecutionReturn {
 
             try {
                 const tokens = tokenize(sql);
-                const stmt = parseStatement(tokens);
-                if (stmt.type !== 'select') {
+                const parsed = parseStatement(tokens);
+                if (parsed.type !== 'select') {
                     throw new Error('This is a DML statement. Use the DML execution path.');
                 }
-                jsonColumnsRef.current = getJsonValueColumns(stmt);
+
+                // Subquery scans must not get JSON_VALUE columns; those apply
+                // only to the outer query's rows.
+                jsonColumnsRef.current = [];
+                const plans = await expandSubqueries(parsed);
+                jsonColumnsRef.current = getJsonValueColumns(parsed);
+                if (plans.length > 1) {
+                    // A subquery's IN list was split: run each part in full and
+                    // merge. Every row matches exactly one part, so the results
+                    // don't overlap; ORDER BY and TOP are applied after merging.
+                    let rows: Record<string, unknown>[] = [];
+                    let firstFetchXml = '';
+                    for (const plan of plans) {
+                        const part = await fetchAllRows(plan);
+                        if (!firstFetchXml) firstFetchXml = part.fetchXml;
+                        rows.push(...part.rows);
+                        if (rows.length > MAX_SUBQUERY_ROWS) {
+                            throw new Error(
+                                `The query returned more than ${MAX_SUBQUERY_ROWS.toLocaleString()} rows across its split parts. Add filters to narrow it.`,
+                            );
+                        }
+                        setState((prev) => ({ ...prev, rowCount: rows.length }));
+                    }
+                    if (parsed.orderBy) rows = sortRows(rows, parsed.orderBy);
+                    if (parsed.top !== undefined) rows = rows.slice(0, parsed.top);
+
+                    const requested = getRequestedColumns(parsed);
+                    const allColumns = extractColumns(rows, requested === null);
+                    const columns = requested ? displayRequestedColumns(requested, allColumns, rows) : allColumns;
+                    const splitExecutionTime = Math.round(performance.now() - start);
+                    fetchXml =
+                        `<!-- A subquery returned more than ${IN_CHUNK_SIZE} values, so the query was split into ${plans.length} queries\n` +
+                        `     of up to ${IN_CHUNK_SIZE} values each and the results were merged client-side. First query: -->\n${firstFetchXml}`;
+                    setState((prev) => ({
+                        ...prev,
+                        results: rows,
+                        columns,
+                        fetchXml,
+                        error: null,
+                        executionTime: splitExecutionTime,
+                        rowCount: rows.length,
+                        pagingCookie: null,
+                        isExecuting: false,
+                    }));
+                    try {
+                        window.toolboxAPI.utils.showNotification({
+                            title: 'Query Complete',
+                            body: `${rows.length} rows returned from ${plans.length} split queries in ${splitExecutionTime}ms`,
+                            type: 'success',
+                        });
+                    } catch {
+                        // toolboxAPI may not be available
+                    }
+                    return { rowCount: rows.length, executionTime: splitExecutionTime, error: null };
+                }
+                const stmt = plans[0];
                 // Capture originally requested columns before any rewriting
                 const requestedCols = getRequestedColumns(stmt);
                 // Try the user's literal column names first. `rewriteVirtualColumns`
@@ -660,7 +786,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 return { rowCount: null, executionTime, error: errorMessage };
             }
         },
-        [runFetchXml],
+        [runFetchXml, expandSubqueries, fetchAllRows],
     );
 
     const loadNextPage = useCallback(async (): Promise<void> => {

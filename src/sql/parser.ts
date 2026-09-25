@@ -19,6 +19,7 @@ import {
     ComparisonOp,
     BetweenExpr,
     InExpr,
+    InSubqueryExpr,
     IsNullExpr,
     LogicalExpr,
     NotExpr,
@@ -196,6 +197,25 @@ function makeWalker(tokens: Token[]) {
         return { column: first.value };
     }
 
+    // After 'IN (' with SELECT next: consume the subquery tokens up to the
+    // matching ')' and parse them as a standalone SELECT.
+    function parseSubquery(): SelectStatement {
+        const subTokens: Token[] = [];
+        let depth = 0;
+        while (!(depth === 0 && check(TokenType.RPAREN))) {
+            const t = peek();
+            if (t.type === TokenType.EOF) {
+                throw new SqlParseError('Unterminated subquery: missing )', t.line, t.column);
+            }
+            if (t.type === TokenType.LPAREN) depth++;
+            if (t.type === TokenType.RPAREN) depth--;
+            subTokens.push(advance());
+        }
+        const end = peek();
+        subTokens.push({ type: TokenType.EOF, value: '', line: end.line, column: end.column });
+        return parseSelect(subTokens);
+    }
+
     function parseWherePrimary(): WhereExpr {
         if (check(TokenType.NOT)) {
             advance();
@@ -293,6 +313,11 @@ function makeWalker(tokens: Token[]) {
             advance();
             advance();
             expect(TokenType.LPAREN);
+            if (check(TokenType.SELECT)) {
+                const subquery = parseSubquery();
+                expect(TokenType.RPAREN);
+                return { kind: 'in_subquery', column: col, subquery, negated: true } as InSubqueryExpr;
+            }
             const values: LiteralValue[] = [parseLiteral()];
             while (check(TokenType.COMMA)) {
                 advance();
@@ -305,6 +330,11 @@ function makeWalker(tokens: Token[]) {
         if (check(TokenType.IN)) {
             advance();
             expect(TokenType.LPAREN);
+            if (check(TokenType.SELECT)) {
+                const subquery = parseSubquery();
+                expect(TokenType.RPAREN);
+                return { kind: 'in_subquery', column: col, subquery } as InSubqueryExpr;
+            }
             const values: LiteralValue[] = [parseLiteral()];
             while (check(TokenType.COMMA)) {
                 advance();
