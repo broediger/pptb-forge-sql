@@ -1,22 +1,29 @@
+export type CsvDelimiter = ',' | ';';
+
 /**
  * Escapes a single CSV field value per RFC 4180.
- * Fields containing commas, double-quotes, or newlines are wrapped in double quotes.
+ * Fields containing the delimiter, double-quotes, or newlines are wrapped in double quotes.
  * Existing double-quote characters are escaped by doubling them ("").
+ * With a semicolon delimiter, numbers use a decimal comma (1.5 → 1,5), matching
+ * the regional Excel convention semicolon CSVs are meant for; otherwise Excel
+ * would read 1.5 as a date or text.
  */
-function escapeCsvField(value: unknown): string {
+function escapeCsvField(value: unknown, delimiter: CsvDelimiter): string {
     if (value === null || value === undefined) {
         return '';
     }
 
     let str: string;
-    if (typeof value === 'object') {
+    if (typeof value === 'number' && delimiter === ';') {
+        str = String(value).replace('.', ',');
+    } else if (typeof value === 'object') {
         str = JSON.stringify(value);
     } else {
         str = String(value);
     }
 
-    // Wrap in quotes if the value contains a comma, double-quote, newline, or carriage return
-    if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
+    // Wrap in quotes if the value contains the delimiter, double-quote, newline, or carriage return
+    if (str.includes('"') || str.includes(delimiter) || str.includes('\n') || str.includes('\r')) {
         return '"' + str.replace(/"/g, '""') + '"';
     }
 
@@ -41,31 +48,47 @@ function triggerDownload(blob: Blob, filename: string): void {
 }
 
 /**
- * Exports query result data as a CSV file and triggers a browser download.
- *
- * The CSV is formatted per RFC 4180:
+ * Serializes query result data as CSV, formatted per RFC 4180:
  * - First row is a header row using the provided column names.
- * - Fields containing commas, double-quotes, or newlines are wrapped in double quotes.
+ * - Fields containing the delimiter, double-quotes, or newlines are wrapped in double quotes.
  * - Double-quote characters within field values are escaped by doubling them.
+ * - Rows are separated by CRLF.
  *
- * @param data     Array of row objects to export.
- * @param columns  Ordered list of column names used for the header and row extraction.
- * @param filename Optional filename for the downloaded file. Defaults to "query-results.csv".
+ * @param data      Array of row objects to export.
+ * @param columns   Ordered list of column names used for the header and row extraction.
+ * @param delimiter Field separator. Semicolon also switches numbers to a decimal comma, for
+ *                  Excel in locales that use one.
  */
-export function exportToCsv(data: Record<string, unknown>[], columns: string[], filename = 'query-results.csv'): void {
+export function toCsv(data: Record<string, unknown>[], columns: string[], delimiter: CsvDelimiter = ','): string {
     const rows: string[] = [];
 
     // Header row
-    rows.push(columns.map(escapeCsvField).join(','));
+    rows.push(columns.map((col) => escapeCsvField(col, delimiter)).join(delimiter));
 
     // Data rows
     for (const row of data) {
-        rows.push(columns.map((col) => escapeCsvField(row[col])).join(','));
+        rows.push(columns.map((col) => escapeCsvField(row[col], delimiter)).join(delimiter));
     }
 
-    // Join with CRLF per RFC 4180
-    const csvContent = rows.join('\r\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    return rows.join('\r\n');
+}
+
+/**
+ * Exports query result data as a CSV file and triggers a browser download.
+ *
+ * @param data      Array of row objects to export.
+ * @param columns   Ordered list of column names used for the header and row extraction.
+ * @param delimiter Field separator. Defaults to a comma.
+ * @param filename  Optional filename for the downloaded file. Defaults to "query-results.csv".
+ */
+export function exportToCsv(
+    data: Record<string, unknown>[],
+    columns: string[],
+    delimiter: CsvDelimiter = ',',
+    filename = 'query-results.csv',
+): void {
+    // UTF-8 BOM so Excel detects the encoding instead of garbling accented characters
+    const blob = new Blob(['\uFEFF' + toCsv(data, columns, delimiter)], { type: 'text/csv;charset=utf-8;' });
     triggerDownload(blob, filename);
 }
 
