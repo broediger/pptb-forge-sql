@@ -7,6 +7,7 @@ import {
     extractColumns,
     getRequestedColumns,
     resolveRequestedColumns,
+    displayRequestedColumns,
     unresolvedVirtualColumns,
     rewriteVirtualColumns,
 } from '../columnResolution';
@@ -30,11 +31,11 @@ function resolveWithRecovery(
 
     let rows = cleanRows(literalResponse);
     let allColumns = extractColumns(rows, false);
-    let columns = resolveRequestedColumns(requestedCols, allColumns, rows[0] ?? {});
+    let columns = resolveRequestedColumns(requestedCols, allColumns, rows);
     let rewrittenTo: string[] | null = null;
 
     if (rows.length > 0) {
-        const unresolved = unresolvedVirtualColumns(requestedCols, allColumns, rows[0] ?? {});
+        const unresolved = unresolvedVirtualColumns(requestedCols, allColumns, rows);
         if (unresolved.size > 0) {
             const rewritten = rewriteVirtualColumns(stmt, unresolved);
             if (rewritten !== stmt) {
@@ -43,7 +44,7 @@ function resolveWithRecovery(
                 );
                 rows = cleanRows(rewrittenResponse(rewritten));
                 allColumns = extractColumns(rows, false);
-                const retryColumns = resolveRequestedColumns(requestedCols, allColumns, rows[0] ?? {});
+                const retryColumns = resolveRequestedColumns(requestedCols, allColumns, rows);
                 if (retryColumns.length > columns.length) columns = retryColumns;
             }
         }
@@ -100,7 +101,7 @@ describe('column resolution — virtual lookup name recovery (issue: owneridname
         const stmt = parseSelect('SELECT name, owneridname FROM account');
         const literal = cleanRows([{ accountid: 'acc-1', name: 'Fourth Coffee' }]);
         const requested = getRequestedColumns(stmt)!;
-        const unresolved = unresolvedVirtualColumns(requested, extractColumns(literal, false), literal[0]);
+        const unresolved = unresolvedVirtualColumns(requested, extractColumns(literal, false), literal);
         expect([...unresolved]).toEqual(['owneridname']);
 
         const rewritten = rewriteVirtualColumns(stmt, unresolved);
@@ -113,7 +114,7 @@ describe('column resolution — virtual lookup name recovery (issue: owneridname
         // `fullname` is a genuine attribute; when it returns data it must not be
         // treated as an unresolved virtual name.
         const rows = cleanRows([{ systemuserid: 'u-1', fullname: 'Björn Rödiger' }]);
-        const unresolved = unresolvedVirtualColumns(['fullname'], extractColumns(rows, false), rows[0]);
+        const unresolved = unresolvedVirtualColumns(['fullname'], extractColumns(rows, false), rows);
         expect(unresolved.size).toBe(0);
     });
 });
@@ -141,9 +142,9 @@ describe('column resolution — JOIN columns (issue: c.fullname on a joined enti
         // Dataverse returns the link-entity attribute under `<alias>.<attr>`.
         const rows = cleanRows([{ accountid: 'acc-1', 'c.fullname': 'Jane Doe' }]);
         const allColumns = extractColumns(rows, false);
-        expect(resolveRequestedColumns(requested, allColumns, rows[0])).toEqual(['c.fullname']);
+        expect(resolveRequestedColumns(requested, allColumns, rows)).toEqual(['c.fullname']);
         // Must not be treated as an unresolved virtual `*name` column.
-        expect(unresolvedVirtualColumns(requested, allColumns, rows[0]).size).toBe(0);
+        expect(unresolvedVirtualColumns(requested, allColumns, rows).size).toBe(0);
     });
 
     it('falls back to the table name as the link alias when the join has no alias', () => {
@@ -151,5 +152,63 @@ describe('column resolution — JOIN columns (issue: c.fullname on a joined enti
             'SELECT contact.fullname FROM account INNER JOIN contact ON account.accountid = contact.parentcustomerid',
         );
         expect(getRequestedColumns(stmt)).toEqual(['contact.fullname']);
+    });
+});
+
+describe('column resolution — columns that are null in some or all rows', () => {
+    // Dataverse omits an attribute from a row when its value is null.
+    const sql =
+        'SELECT l.fullname, l.evn_flussrichtungcode, l.evn_umsatzsteuerrechtlbehandlungcode FROM orb_automatelogs logs JOIN lead l ON logs.orb_primaryregardingguid = l.leadid';
+    const rows = cleanRows([
+        { 'l.fullname': 'August Krautwurst', 'l.evn_flussrichtungcode': 790530001 },
+        {
+            'l.fullname': 'Sandra Kabinger',
+            'l.evn_flussrichtungcode': 790530001,
+            'l.evn_umsatzsteuerrechtlbehandlungcode': 790530000,
+        },
+    ]);
+
+    it('collects columns from every row, not just the first', () => {
+        expect(extractColumns(rows, false)).toEqual([
+            'l.fullname',
+            'l.evn_flussrichtungcode',
+            'l.evn_umsatzsteuerrechtlbehandlungcode',
+        ]);
+    });
+
+    it('resolves a requested column that is null in the first row', () => {
+        const requested = getRequestedColumns(parseSelect(sql))!;
+        expect(resolveRequestedColumns(requested, extractColumns(rows, false), rows)).toEqual([
+            'l.fullname',
+            'l.evn_flussrichtungcode',
+            'l.evn_umsatzsteuerrechtlbehandlungcode',
+        ]);
+    });
+
+    it('keeps a requested column that is null in every row as an empty column', () => {
+        const requested = getRequestedColumns(parseSelect(sql))!;
+        const allNull = cleanRows([{ 'l.fullname': 'August Krautwurst', 'l.evn_flussrichtungcode': 790530001 }]);
+        const allColumns = extractColumns(allNull, false);
+        expect(resolveRequestedColumns(requested, allColumns, allNull)).toEqual([
+            'l.fullname',
+            'l.evn_flussrichtungcode',
+        ]);
+        expect(displayRequestedColumns(requested, allColumns, allNull)).toEqual([
+            'l.fullname',
+            'l.evn_flussrichtungcode',
+            'l.evn_umsatzsteuerrechtlbehandlungcode',
+        ]);
+    });
+
+    it('does not treat a name column present only in a later row as unresolved', () => {
+        const later = cleanRows([
+            { accountid: 'a-1' },
+            {
+                accountid: 'a-2',
+                _ownerid_value: 'owner-guid-1',
+                '_ownerid_value@OData.Community.Display.V1.FormattedValue': 'Jane Doe',
+            },
+        ]);
+        expect(unresolvedVirtualColumns(['owneridname'], extractColumns(later, false), later).size).toBe(0);
     });
 });

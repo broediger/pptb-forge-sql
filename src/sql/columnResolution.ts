@@ -59,13 +59,26 @@ export function cleanRows(rows: Record<string, unknown>[]): Record<string, unkno
 }
 
 /**
+ * Every key that appears in any row, in first-seen order. Dataverse omits an
+ * attribute from a row when its value is null, so a single row isn't enough
+ * to know which columns the result has.
+ */
+export function rowKeys(rows: Record<string, unknown>[]): string[] {
+    const keys = new Set<string>();
+    for (const row of rows) {
+        for (const key of Object.keys(row)) keys.add(key);
+    }
+    return [...keys];
+}
+
+/**
  * Extract columns for display. When isSelectStar is true, hide the
  * derived alias columns (_formatted, _type, _nav, xxxname from lookups)
  * to reduce noise — users can request them explicitly if needed.
  */
 export function extractColumns(rows: Record<string, unknown>[], isSelectStar = false): string[] {
     if (rows.length === 0) return [];
-    const allKeys = Object.keys(rows[0]);
+    const allKeys = rowKeys(rows);
     if (!isSelectStar) return allKeys;
     // Hide derived alias columns and raw _xxx_value lookup keys — the clean
     // xxx / xxxname aliases are exposed instead.
@@ -151,15 +164,30 @@ export function resolveColumnKey(col: string, availableColumns: string[], allKey
 export function resolveRequestedColumns(
     requested: string[],
     availableColumns: string[],
-    sampleRow: Record<string, unknown>,
+    rows: Record<string, unknown>[],
 ): string[] {
-    const allKeys = Object.keys(sampleRow);
+    const allKeys = rowKeys(rows);
     const resolved: string[] = [];
     for (const col of requested) {
         const key = resolveColumnKey(col, availableColumns, allKeys);
         if (key) resolved.push(key);
     }
     return resolved;
+}
+
+/**
+ * Display columns for an explicit column list: every requested column, in
+ * order, mapped to its result key where one exists. A requested column that no
+ * row contains (Dataverse omits null values, so every row was null) is kept
+ * under its requested name and shows as empty, instead of disappearing.
+ */
+export function displayRequestedColumns(
+    requested: string[],
+    availableColumns: string[],
+    rows: Record<string, unknown>[],
+): string[] {
+    const allKeys = rowKeys(rows);
+    return requested.map((col) => resolveColumnKey(col, availableColumns, allKeys) ?? col);
 }
 
 /**
@@ -171,9 +199,9 @@ export function resolveRequestedColumns(
 export function unresolvedVirtualColumns(
     requested: string[],
     availableColumns: string[],
-    sampleRow: Record<string, unknown>,
+    rows: Record<string, unknown>[],
 ): Set<string> {
-    const allKeys = Object.keys(sampleRow);
+    const allKeys = rowKeys(rows);
     const set = new Set<string>();
     for (const col of requested) {
         if (col.length > 4 && col.endsWith('name') && resolveColumnKey(col, availableColumns, allKeys) === null) {
