@@ -544,17 +544,8 @@ export function generateFetchXml(ast: SelectStatement): string {
         }
     }
 
-    // HAVING filter
-    if (ast.having) {
-        const filterXml = generateCondition(ast.having, '    ', aggregateAliasMap);
-        if (filterXml.trimStart().startsWith('<filter')) {
-            lines.push(filterXml);
-        } else {
-            lines.push(`    <filter type="and">`);
-            lines.push(filterXml);
-            lines.push(`    </filter>`);
-        }
-    }
+    // HAVING is not emitted: FetchXML can't filter on aggregate values, so the
+    // query runner evaluates it client-side on the grouped rows (see having.ts).
 
     // ORDER BY
     if (ast.orderBy) {
