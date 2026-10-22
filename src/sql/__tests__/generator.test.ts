@@ -308,6 +308,43 @@ describe('generateFetchXml', () => {
             const xml = toFetchXml('SELECT status, COUNT(id) FROM account GROUP BY status');
             expect(strip(xml)).toContain('groupby="true"');
         });
+
+        // Dataverse rejects duplicate aliases with 0x80041130 ("is not a unique alias").
+        const sameAttributeOnBothTables =
+            'SELECT t1.formatcode, t2.formatcode, COUNT(*) FROM meter t1 ' +
+            'INNER JOIN contract t2 ON t1.contractid = t2.contractid ' +
+            'GROUP BY t1.formatcode, t2.formatcode';
+
+        it('gives the same attribute grouped on two tables distinct aliases', () => {
+            const xml = strip(toFetchXml(sameAttributeOnBothTables));
+            expect(xml).toContain('<attribute name="formatcode" groupby="true" alias="formatcode" />');
+            expect(xml).toContain('<attribute name="formatcode" groupby="true" alias="t2_formatcode" />');
+        });
+
+        it('keeps a plain alias for a grouped joined column when it is unique', () => {
+            const xml = strip(
+                toFetchXml(
+                    'SELECT t2.formatcode, COUNT(*) FROM meter t1 ' +
+                        'INNER JOIN contract t2 ON t1.contractid = t2.contractid GROUP BY t2.formatcode',
+                ),
+            );
+            expect(xml).toContain('<attribute name="formatcode" groupby="true" alias="formatcode" />');
+        });
+
+        it('does not reuse an explicit alias for a grouped column', () => {
+            const xml = strip(
+                toFetchXml(
+                    'SELECT t1.name AS formatcode, t2.formatcode, COUNT(*) FROM meter t1 ' +
+                        'INNER JOIN contract t2 ON t1.contractid = t2.contractid GROUP BY t1.name, t2.formatcode',
+                ),
+            );
+            expect(xml).toContain('alias="t2_formatcode"');
+        });
+
+        it('orders by the renamed alias of a grouped column', () => {
+            const xml = strip(toFetchXml(sameAttributeOnBothTables + ' ORDER BY t2.formatcode'));
+            expect(xml).toContain('<order alias="t2_formatcode"');
+        });
     });
 
     // ── XML escaping ──────────────────────────────────────────────────────────
