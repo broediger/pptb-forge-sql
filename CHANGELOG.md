@@ -5,6 +5,7 @@
 ### Fixed
 - `HAVING` failed: the condition was sent to Dataverse as a filter on the aggregate alias, which FetchXML doesn't support. HAVING is now evaluated client-side on the grouped rows, after reading every page of groups (up to 50,000), and `TOP` is applied after the filter. Aggregates or grouping columns used only in HAVING (e.g. `SELECT name FROM account GROUP BY name HAVING COUNT(*) > 1`) are fetched without being shown. Grouped counts over Dataverse's 50,000-record aggregate limit fall back to a paged scan as before, with HAVING applied to the result. (#20)
 - Grouping by the same column on two joined tables (e.g. `GROUP BY t1.statuscode, t2.statuscode`) failed with `0x80041130: … is not a unique alias`. The second column is now named after its table (`t2_statuscode`), in the results and in ORDER BY. (#22)
+- A WHERE condition on the FROM table written with its alias or table name (e.g. `FROM account a … WHERE a.statecode = 0`) failed with `0x80041108: Link entity with name or alias a is not found`. Such conditions now apply to the main table.
 - Updated build and test dependencies (including Vite 7.3.7 and Vitest 4.1.12) to resolve all high-severity `npm audit` findings. (#21)
 
 ## [1.1.0] - 2026-09-25

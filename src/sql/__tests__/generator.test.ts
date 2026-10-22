@@ -347,6 +347,39 @@ describe('generateFetchXml', () => {
         });
     });
 
+    // ── Qualified WHERE columns ───────────────────────────────────────────────
+
+    // entityname must name a link-entity; the root entity has no alias, so
+    // entityname="t1" fails with 0x80041108 ("Link entity ... t1 is not found").
+    describe('WHERE columns qualified with the FROM table', () => {
+        const joinSql = (where: string) =>
+            'SELECT t1.name FROM meter t1 INNER JOIN contract t2 ON t1.contractid = t2.contractid WHERE ' + where;
+
+        it('drops the FROM alias from conditions', () => {
+            const xml = strip(
+                toFetchXml(
+                    joinSql(
+                        't1.statecode = 0 AND t1.statuscode IN (1, 2) AND t1.code BETWEEN 1 AND 5 ' +
+                            "AND NOT (t1.flag = TRUE) AND (t1.name LIKE 'a%' OR t1.name IS NULL)",
+                    ),
+                ),
+            );
+            expect(xml).not.toContain('entityname="t1"');
+            expect(xml).toContain('<condition attribute="statecode" operator="eq" value="0" />');
+            expect(xml).toContain('<condition attribute="statuscode" operator="in">');
+        });
+
+        it('drops the FROM table name from conditions', () => {
+            const xml = strip(toFetchXml('SELECT name FROM account WHERE account.statecode = 0'));
+            expect(xml).toContain('<condition attribute="statecode" operator="eq" value="0" />');
+        });
+
+        it('keeps entityname for conditions on a joined table', () => {
+            const xml = strip(toFetchXml(joinSql('t2.statecode = 0')));
+            expect(xml).toContain('<condition attribute="statecode" entityname="t2" operator="eq" value="0" />');
+        });
+    });
+
     // ── XML escaping ──────────────────────────────────────────────────────────
 
     describe('XML escaping', () => {
