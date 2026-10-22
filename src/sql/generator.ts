@@ -54,6 +54,38 @@ const OP_MAP: Record<string, string> = {
     LIKE: 'like',
 };
 
+// ── Drop FROM-table qualifiers from conditions ──
+
+/**
+ * `entityname` on a condition must name a link-entity: the root entity has no
+ * alias in the FetchXML, so `WHERE t1.statecode = 0` with `FROM account t1`
+ * fails with 0x80041108 ("Link entity with name or alias t1 is not found").
+ * Columns qualified with the FROM table or its alias are left unqualified.
+ */
+function unqualifyFromColumns(expr: WhereExpr, fromRefs: Set<string>): WhereExpr {
+    const unqualify = (col: ColumnRef): ColumnRef =>
+        col.table && fromRefs.has(col.table) ? { ...col, table: undefined } : col;
+
+    switch (expr.kind) {
+        case 'comparison':
+            return isAggregateExpr(expr.left) ? expr : { ...expr, left: unqualify(expr.left) };
+        case 'between':
+        case 'in':
+        case 'in_subquery':
+        case 'is_null':
+            return { ...expr, column: unqualify(expr.column) };
+        case 'and':
+        case 'or':
+            return {
+                ...expr,
+                left: unqualifyFromColumns(expr.left, fromRefs),
+                right: unqualifyFromColumns(expr.right, fromRefs),
+            };
+        case 'not':
+            return { ...expr, expr: unqualifyFromColumns(expr.expr, fromRefs) };
+    }
+}
+
 // ── Resolve the left side of a comparison for condition generation ──
 
 function resolveConditionLeft(left: ColumnRef | AggregateExpr): {
@@ -581,7 +613,8 @@ export function generateFetchXml(ast: SelectStatement): string {
 
     // WHERE filter
     if (ast.where) {
-        const filterXml = generateCondition(ast.where, '    ', aggregateAliasMap);
+        const where = unqualifyFromColumns(ast.where, new Set([ast.from.table, fromAlias]));
+        const filterXml = generateCondition(where, '    ', aggregateAliasMap);
         if (filterXml.trimStart().startsWith('<filter')) {
             lines.push(filterXml);
         } else {
