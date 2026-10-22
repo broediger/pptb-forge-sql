@@ -35,6 +35,12 @@ FROM <entity> [AS alias]
 
 Supported aggregates: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
 
+FetchXML has no HAVING, so Forge SQL evaluates it client-side: it reads every group of the aggregate query, keeps the ones that match, then applies `TOP`. Limits:
+
+- An aggregate in HAVING can only be compared with a value (`COUNT(*) > 1`), not with another aggregate. `BETWEEN`, `IN` and `IS NULL` work on grouping columns only.
+- At most 50,000 groups are read before HAVING is applied.
+- HAVING can't be combined with an `IN (SELECT …)` subquery that returns more than 250 values.
+
 ### INSERT
 
 ```sql
@@ -89,6 +95,9 @@ SELECT a.name, c.fullname FROM account a INNER JOIN contact c ON a.accountid = c
 -- Count accounts by status
 SELECT statecode, COUNT(accountid) FROM account GROUP BY statecode
 
+-- Account names used more than once
+SELECT name, COUNT(*) AS cnt FROM account GROUP BY name HAVING COUNT(*) > 1 ORDER BY cnt DESC
+
 -- Insert a record
 INSERT INTO account (name, revenue) VALUES ('Contoso Ltd', 50000)
 
@@ -132,6 +141,12 @@ npm run test
 ```
 
 The test suite covers the SQL parser and FetchXML generator (203 tests across SELECT and DML).
+
+---
+
+## AI Assistance
+
+Parts of this tool were generated with Claude Code and reviewed, tested, and maintained by the contributors listed in package.json.
 
 ---
 

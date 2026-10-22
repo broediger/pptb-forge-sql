@@ -3,6 +3,7 @@ import { tokenize } from '../lexer';
 import { parse, parseStatement } from '../parser';
 import { generateFetchXml } from '../generator';
 import { cleanRows } from '../columnResolution';
+import { planHaving } from '../having';
 import type { InSubqueryExpr, LiteralValue, SelectStatement } from '../types';
 import {
     collectSubqueries,
@@ -163,7 +164,7 @@ describe('substituting subquery values', () => {
 
     it('gives a clear error for a subquery the runner does not resolve', () => {
         const update = parseStatement(tokenize('SELECT a FROM t GROUP BY a HAVING a IN (SELECT id FROM u)'));
-        expect(() => generateFetchXml(update as SelectStatement)).toThrow(/only supported in the WHERE clause/);
+        expect(() => planHaving(update as SelectStatement)).toThrow(/not supported in HAVING/);
     });
 });
 

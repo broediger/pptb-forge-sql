@@ -396,14 +396,13 @@ describe('generateFetchXml', () => {
     // ── HAVING with aggregates ────────────────────────────────────────────────
 
     describe('HAVING aggregate conditions', () => {
-        it('references aggregate by alias in HAVING condition', () => {
+        it('does not emit HAVING as a filter (it is evaluated client-side)', () => {
             const xml = toFetchXml('SELECT status, COUNT(id) FROM account GROUP BY status HAVING COUNT(id) > 5');
             const s = strip(xml);
             expect(s).toContain('aggregate="true"');
             expect(s).toContain('aggregate="count"');
-            // The HAVING condition should reference the auto-alias, not "count(id)"
-            expect(s).not.toContain('attribute="count(id)"');
-            expect(s).toContain('attribute="count_id"');
+            expect(s).not.toContain('<filter');
+            expect(s).not.toContain('attribute="count_id"');
         });
     });
 

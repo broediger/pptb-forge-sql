@@ -23,6 +23,7 @@ import {
     MAX_SUBQUERY_ROWS,
 } from '../sql/subquery';
 import type { InSubqueryExpr, LiteralValue } from '../sql/types';
+import { planHaving, applyHaving, withPage, describeHaving, HAVING_PAGE_SIZE, MAX_HAVING_GROUPS } from '../sql/having';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -400,6 +401,36 @@ export function useQueryExecution(): QueryExecutionReturn {
     );
 
     /**
+     * Read every page of an aggregate query. Aggregate results carry no paging
+     * cookie, so pages are requested by number until a short page says there
+     * are no more groups.
+     */
+    const fetchAllAggregatePages = useCallback(
+        async (fetchXml: string): Promise<{ rows: Record<string, unknown>[]; pageCount: number }> => {
+            if (typeof window === 'undefined' || !window.dataverseAPI) {
+                throw new Error('Dataverse API not available. Load this tool in Power Platform ToolBox.');
+            }
+            const rows: Record<string, unknown>[] = [];
+            let page = 1;
+            while (true) {
+                const result = await window.dataverseAPI.fetchXmlQuery(withPage(fetchXml, page));
+                const pageRows = (result.value as Record<string, unknown>[] | undefined) ?? [];
+                rows.push(...cleanRows(pageRows));
+                if (rows.length > MAX_HAVING_GROUPS) {
+                    throw new Error(
+                        `The query produced more than ${MAX_HAVING_GROUPS.toLocaleString()} groups before HAVING was applied. Add filters to narrow it.`,
+                    );
+                }
+                setState((prev) => ({ ...prev, rowCount: rows.length }));
+                if (pageRows.length < HAVING_PAGE_SIZE) break;
+                page += 1;
+            }
+            return { rows, pageCount: page };
+        },
+        [],
+    );
+
+    /**
      * Resolve `IN (SELECT …)` subqueries (including nested ones) to literal IN
      * lists. Returns the statement to run, or several when a long list had to
      * be split across queries.
@@ -457,6 +488,11 @@ export function useQueryExecution(): QueryExecutionReturn {
                 jsonColumnsRef.current = [];
                 const plans = await expandSubqueries(parsed);
                 jsonColumnsRef.current = getJsonValueColumns(parsed);
+                if (plans.length > 1 && parsed.having) {
+                    throw new Error(
+                        `HAVING can't be combined with a subquery that returns more than ${IN_CHUNK_SIZE} values (the query would be split and the groups couldn't be merged).`,
+                    );
+                }
                 if (plans.length > 1) {
                     // A subquery's IN list was split: run each part in full and
                     // merge. Every row matches exactly one part, so the results
@@ -507,6 +543,72 @@ export function useQueryExecution(): QueryExecutionReturn {
                     return { rowCount: rows.length, executionTime: splitExecutionTime, error: null };
                 }
                 const stmt = plans[0];
+
+                // HAVING: FetchXML can't express it. Read every group, then
+                // filter (and apply TOP) client-side.
+                const havingPlan = planHaving(stmt);
+                if (havingPlan) {
+                    fetchXml = generateFetchXml(applyEntityAliases(havingPlan.stmt));
+                    const havingText = describeHaving(havingPlan.having).replace(/--/g, '- -');
+                    let groups: Record<string, unknown>[];
+                    let annotatedFetchXml: string;
+                    try {
+                        const read = await fetchAllAggregatePages(fetchXml);
+                        groups = applyReverseEntityAliases(read.rows, stmt.from.table);
+                        annotatedFetchXml =
+                            `<!-- HAVING ${havingText} is evaluated client-side (FetchXML has no HAVING).\n` +
+                            `     ${read.pageCount} page(s), ${groups.length} group(s) read. -->\n${fetchXml}`;
+                    } catch (queryErr) {
+                        // Same 50,000-record aggregate limit fallback as below,
+                        // for `SELECT <col>, COUNT(*) … GROUP BY <col> HAVING …`.
+                        const isAggregateLimit =
+                            queryErr instanceof Error && queryErr.message.includes('0x8004e023');
+                        const groupMatch = isAggregateLimit ? isSimpleGroupByCount(havingPlan.stmt) : null;
+                        if (!groupMatch) throw queryErr;
+                        const fallback = await runPagedGroupByCountFallback(havingPlan.stmt, groupMatch.groupColumn);
+                        const groupKey = groupMatch.groupColumn.alias ?? groupMatch.groupColumn.column;
+                        const countKey = groupMatch.aggregate.alias ?? 'count_all';
+                        groups = Array.from(fallback.counts.entries()).map(([value, count]) => ({
+                            [groupKey]: value === '' ? null : value,
+                            [countKey]: count,
+                        }));
+                        if (havingPlan.stmt.orderBy) groups = sortRows(groups, havingPlan.stmt.orderBy);
+                        annotatedFetchXml =
+                            `<!-- Aggregate GROUP BY count exceeded Dataverse's 50,000-record limit (0x8004e023).\n` +
+                            `     Recovered via paged scan: ${fallback.pageCount} page(s), ${fallback.scannedRows.toLocaleString()} row(s) scanned, ${fallback.counts.size} group(s) found, aggregated client-side.\n` +
+                            `     HAVING ${havingText} is evaluated client-side. -->\n` +
+                            `<!-- Original (rejected): -->\n${fetchXml}\n` +
+                            `<!-- Paged scan used for the GROUP BY: -->\n${fallback.scanFetchXml}`;
+                    }
+                    const rows = applyHaving(groups, havingPlan);
+                    const requested = getRequestedColumns(stmt);
+                    const allColumns = extractColumns(rows);
+                    const columns = requested ? displayRequestedColumns(requested, allColumns, rows) : allColumns;
+                    const havingExecutionTime = Math.round(performance.now() - start);
+                    fetchXml = annotatedFetchXml;
+                    setState((prev) => ({
+                        ...prev,
+                        results: rows,
+                        columns,
+                        fetchXml: annotatedFetchXml,
+                        error: null,
+                        executionTime: havingExecutionTime,
+                        rowCount: rows.length,
+                        pagingCookie: null,
+                        isExecuting: false,
+                    }));
+                    try {
+                        window.toolboxAPI.utils.showNotification({
+                            title: 'Query Complete',
+                            body: `${rows.length} of ${groups.length} group(s) matched HAVING in ${havingExecutionTime}ms`,
+                            type: 'success',
+                        });
+                    } catch {
+                        // toolboxAPI may not be available
+                    }
+                    return { rowCount: rows.length, executionTime: havingExecutionTime, error: null };
+                }
+
                 // Capture originally requested columns before any rewriting
                 const requestedCols = getRequestedColumns(stmt);
                 // Try the user's literal column names first. `rewriteVirtualColumns`
@@ -786,7 +888,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 return { rowCount: null, executionTime, error: errorMessage };
             }
         },
-        [runFetchXml, expandSubqueries, fetchAllRows],
+        [runFetchXml, expandSubqueries, fetchAllRows, fetchAllAggregatePages],
     );
 
     const loadNextPage = useCallback(async (): Promise<void> => {

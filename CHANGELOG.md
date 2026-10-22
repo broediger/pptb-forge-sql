@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `HAVING` failed: the condition was sent to Dataverse as a filter on the aggregate alias, which FetchXML doesn't support. HAVING is now evaluated client-side on the grouped rows, after reading every page of groups (up to 50,000), and `TOP` is applied after the filter. Aggregates or grouping columns used only in HAVING (e.g. `SELECT name FROM account GROUP BY name HAVING COUNT(*) > 1`) are fetched without being shown. Grouped counts over Dataverse's 50,000-record aggregate limit fall back to a paged scan as before, with HAVING applied to the result.
+
 ## [1.1.0] - 2026-09-25
 
 ### Added
