@@ -199,6 +199,17 @@ describe('column resolution — JOIN columns (issue: c.fullname on a joined enti
     });
 });
 
+describe('column resolution — grouped columns (issue: 0x80041130 duplicate alias)', () => {
+    it('requests grouped columns under their FetchXML aliases', () => {
+        // Aliased attributes come back under the alias, without a link alias prefix.
+        const stmt = parseSelect(
+            'SELECT t1.formatcode, t2.formatcode, COUNT(*) FROM meter t1 ' +
+                'INNER JOIN contract t2 ON t1.contractid = t2.contractid GROUP BY t1.formatcode, t2.formatcode',
+        );
+        expect(getRequestedColumns(stmt)).toEqual(['formatcode', 't2_formatcode', 'count_all']);
+    });
+});
+
 describe('column resolution — columns that are null in some or all rows', () => {
     // Dataverse omits an attribute from a row when its value is null.
     const sql =

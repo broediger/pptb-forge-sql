@@ -1,6 +1,7 @@
 import type { SelectStatement } from './types';
 import { isColumnRef, isJsonValueExpr } from './types';
 import { getJsonValueColumns } from './jsonValue';
+import { groupByColumnAliases } from './generator';
 
 // OData annotation suffixes → clean column name suffixes
 const ANNOTATION_MAP: [RegExp, string][] = [
@@ -115,7 +116,11 @@ export function getRequestedColumns(stmt: SelectStatement): string[] | null {
     const jsonNames = getJsonValueColumns(stmt).map((jc) => jc.name);
     let jsonIndex = 0;
 
-    return stmt.columns.map((c) => {
+    // Grouped columns come back under their FetchXML alias, without a link
+    // alias prefix.
+    const groupByAliases = groupByColumnAliases(stmt);
+
+    return stmt.columns.map((c, i) => {
         if (isJsonValueExpr(c)) {
             return jsonNames[jsonIndex++];
         }
@@ -124,6 +129,7 @@ export function getRequestedColumns(stmt: SelectStatement): string[] | null {
             return c.alias ?? `${c.function.toLowerCase()}_${c.column.column === '*' ? 'all' : c.column.column}`;
         }
         if (c.alias) return c.alias;
+        if (groupByAliases[i]) return groupByAliases[i];
         // Attributes from a joined entity come back prefixed with the link
         // alias (e.g. contact's `fullname` under join alias `c` → `c.fullname`).
         if (c.table && c.table !== stmt.from.table && c.table !== fromRef) {

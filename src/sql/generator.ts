@@ -284,6 +284,54 @@ function aggregateKey(agg: AggregateExpr): string {
     return `${agg.function.toLowerCase()}(${col})`;
 }
 
+// ── GROUP BY aliases ──
+
+function buildGroupByColumns(groupBy: ColumnRef[] | undefined): Set<string> {
+    const set = new Set<string>();
+    for (const col of groupBy ?? []) {
+        set.add(col.column);
+        if (col.table) set.add(`${col.table}.${col.column}`);
+    }
+    return set;
+}
+
+function isGroupByColumn(col: ColumnRef, groupByColumns: Set<string>): boolean {
+    return groupByColumns.has(col.column) || (col.table ? groupByColumns.has(`${col.table}.${col.column}`) : false);
+}
+
+/**
+ * Aliases for the grouped columns selected without an explicit alias, aligned
+ * with `stmt.columns` (undefined for every other column). Dataverse requires an
+ * alias on each attribute of an aggregate query, unique across the whole fetch
+ * including link-entities (0x80041130). A column keeps its own name unless that
+ * is taken, e.g. by the same attribute on a joined table; then it is prefixed
+ * with its table reference (`t2_statuscode`).
+ */
+export function groupByColumnAliases(stmt: SelectStatement): (string | undefined)[] {
+    const groupByColumns = buildGroupByColumns(stmt.groupBy);
+    const taken = new Set<string>();
+    for (const col of stmt.columns) {
+        if (col.alias) {
+            taken.add(col.alias.toLowerCase());
+        } else if (isAggregateExpr(col)) {
+            const colName = col.column.column === '*' ? 'all' : col.column.column;
+            taken.add(`${col.function.toLowerCase()}_${colName}`);
+        }
+    }
+
+    return stmt.columns.map((col) => {
+        if (!isColumnRef(col) || col.alias || col.column === '*' || !isGroupByColumn(col, groupByColumns)) {
+            return undefined;
+        }
+        let alias = col.column;
+        if (taken.has(alias.toLowerCase()) && col.table) alias = `${col.table}_${col.column}`;
+        const base = alias;
+        for (let n = 2; taken.has(alias.toLowerCase()); n++) alias = `${base}_${n}`;
+        taken.add(alias.toLowerCase());
+        return alias;
+    });
+}
+
 // ── Attribute generation ──
 
 function generateAttributeLine(
@@ -313,12 +361,11 @@ function generateAttributeLine(
         return ''; // wildcard — handled separately as <all-attributes />
     }
     const name = xmlEscape(col.column);
-    const isGroupBy =
-        groupByColumns.has(col.column) || (col.table ? groupByColumns.has(`${col.table}.${col.column}`) : false);
+    const isGroupBy = isGroupByColumn(col, groupByColumns);
     // Dataverse requires an alias on every attribute in an aggregate query
-    // (including the groupby column). Default to the column name itself when
-    // none is supplied so the generated FetchXML is accepted.
-    const aliasValue = col.alias ?? (isGroupBy ? col.column : undefined);
+    // (including the groupby column). Use the unique alias from
+    // groupByColumnAliases, falling back to the column name itself.
+    const aliasValue = col.alias ?? (isGroupBy ? (autoAlias ?? col.column) : undefined);
     const alias = aliasValue ? ` alias="${xmlEscape(aliasValue)}"` : '';
     const groupby = isGroupBy ? ` groupby="true"` : '';
     return `${indent}<attribute name="${name}"${groupby}${alias} />`;
@@ -330,13 +377,13 @@ export function generateFetchXml(ast: SelectStatement): string {
     const lines: string[] = [];
 
     // Build the set of GROUP BY column names for quick lookup
-    const groupByColumns = new Set<string>();
-    if (ast.groupBy) {
-        for (const col of ast.groupBy) {
-            groupByColumns.add(col.column);
-            if (col.table) groupByColumns.add(`${col.table}.${col.column}`);
-        }
-    }
+    const groupByColumns = buildGroupByColumns(ast.groupBy);
+    const groupByAliasList = groupByColumnAliases(ast);
+    const groupByAliases = new Map<SelectExpr, string>();
+    ast.columns.forEach((col, i) => {
+        const alias = groupByAliasList[i];
+        if (alias) groupByAliases.set(col, alias);
+    });
 
     // Build auto-alias map for aggregates (used to reference them in HAVING conditions)
     const aggregateAliasMap = new Map<string, string>();
@@ -451,7 +498,7 @@ export function generateFetchXml(ast: SelectStatement): string {
     } else {
         for (const col of mainColumns) {
             // Auto-generate alias for aggregates that need one
-            let autoAlias: string | undefined;
+            let autoAlias: string | undefined = groupByAliases.get(col);
             if (isAggregateExpr(col) && !col.alias) {
                 const key = aggregateKey(col);
                 autoAlias = aggregateAliasMap.get(key);
@@ -525,7 +572,7 @@ export function generateFetchXml(ast: SelectStatement): string {
         } else {
             lines.push(`    <link-entity name="${name}"${fromPart}${toPart} link-type="${linkType}"${alias}>`);
             for (const col of joinCols) {
-                const line = generateAttributeLine(col, groupByColumns, '      ');
+                const line = generateAttributeLine(col, groupByColumns, '      ', groupByAliases.get(col));
                 if (line) lines.push(line);
             }
             lines.push(`    </link-entity>`);
@@ -552,7 +599,17 @@ export function generateFetchXml(ast: SelectStatement): string {
         // Build a set of known join aliases/tables for entityname resolution
         const joinAliasSet = new Set(ast.joins.map((j) => j.alias ?? j.table));
         for (const item of ast.orderBy) {
-            const ref = xmlEscape(item.column.column);
+            // A grouped column that had to be renamed (same attribute on two
+            // tables) is ordered by its unique alias.
+            const groupedIndex = ast.columns.findIndex(
+                (c) =>
+                    isColumnRef(c) &&
+                    !c.alias &&
+                    c.column === item.column.column &&
+                    (c.table ?? '') === (item.column.table ?? ''),
+            );
+            const groupedAlias = hasAggregate && groupedIndex >= 0 ? groupByAliasList[groupedIndex] : undefined;
+            const ref = xmlEscape(groupedAlias ?? item.column.column);
             const tableRef = item.column.table;
             // If ordering by a column from a joined entity, emit entityname attribute
             const entitynamePart = tableRef && joinAliasSet.has(tableRef) ? ` entityname="${xmlEscape(tableRef)}"` : '';
