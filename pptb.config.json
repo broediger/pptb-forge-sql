@@ -1,0 +1,43 @@
+{
+    "invocation": {
+        "version": "1.0.0",
+        "prefill": {
+            "properties": {
+                "sql": {
+                    "type": "string",
+                    "title": "SQL query",
+                    "description": "A single SELECT statement against Dataverse, using table and column logical names (e.g. SELECT TOP 10 name, ownerid FROM account WHERE statecode = 0). Supports JOIN, WHERE, GROUP BY, HAVING, ORDER BY, TOP, DISTINCT, IN (SELECT ...) and JSON_VALUE. INSERT, UPDATE and DELETE are rejected.",
+                    "required": true
+                },
+                "maxRows": {
+                    "type": "number",
+                    "title": "Maximum rows",
+                    "description": "Maximum number of rows to return (default 500, at most 5000). moreRecords is true when more rows exist; narrow the query or use TOP."
+                }
+            }
+        },
+        "returnTopic": {
+            "properties": {
+                "status": { "type": "string", "enum": ["success", "error"] },
+                "rows": { "type": "array", "items": { "type": "object" } },
+                "columns": { "type": "array", "items": { "type": "string" } },
+                "rowCount": { "type": "number" },
+                "moreRecords": { "type": "boolean" },
+                "fetchXml": { "type": "string" },
+                "summary": { "type": "string" },
+                "executionTimeMs": { "type": "number" },
+                "error": { "type": "string" }
+            }
+        }
+    },
+    "agents": {
+        "version": "1.0.0",
+        "headless": true,
+        "invokable": true,
+        "modes": ["two-way"],
+        "defaultMode": "two-way",
+        "timeoutMS": 120000,
+        "executionModes": ["headless"],
+        "headlessEntry": "dist/headless.js"
+    }
+}

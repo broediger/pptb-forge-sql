@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- AI agents can run SELECT queries through the Power Platform ToolBox MCP server (e.g. from Claude Code, Claude Desktop or VS Code). Queries run headless against the saved connection the user picks and return the rows, columns and generated FetchXML. INSERT, UPDATE and DELETE are rejected. See "Use from AI agents (MCP)" in the README.
+
 ## [1.1.1] - 2026-10-22
 
 ### Fixed
