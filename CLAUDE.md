@@ -9,8 +9,8 @@ Forge SQL is a Power Platform ToolBox (PPTB) tool that lets users write and exec
 ## Commands
 
 - `npm run dev` — Vite dev server in a plain browser. The host APIs don't exist there (see below), so it's only useful for UI work.
-- `npm run build` — typecheck then bundle (`tsc && vite build`)
-- `npm run watch` — rebuild on file changes (use with Load Local Tool, see Debugging)
+- `npm run build` — typecheck, bundle the tool (`vite build`), then build the headless MCP entry `dist/headless.js` (`vite build -c vite.headless.config.ts`)
+- `npm run watch` — rebuild on file changes (use with Load Local Tool, see Debugging). Only rebuilds the tool UI, not `dist/headless.js`.
 - `npm test` / `npm run test:watch` — vitest (`src/**/__tests__/*.test.ts`, node environment, no DOM/jsdom)
 - `npm run lint` — ESLint; `npm run type-check` — `tsc --noEmit`
 - `npm run format` / `format:check` — Prettier
@@ -40,6 +40,7 @@ Run a single test file with `npx vitest run src/sql/__tests__/parser.test.ts`.
 `lexer.ts` → `parser.ts` (AST in `types.ts`) → `generator.ts` (AST → FetchXML). `index.ts` re-exports the entry points. Supporting modules:
 
 - `columnResolution.ts` — post-processes Dataverse rows: renames OData annotations (`…@OData.Community.Display.V1.FormattedValue` → `_formatted`, plus `xxxname` aliases), exposes lookup GUIDs under clean names, and maps requested columns to result keys, including recovery of virtual `xxxname` columns.
+- `selectExecution.ts` — `executeSelect()` runs a parsed SELECT end to end: subquery expansion, HAVING, the virtual-name retries, the 50,000-record aggregate fallbacks, and returns rows, columns and the (annotated) FetchXML. Dataverse is reached only through an injected `fetchXmlQuery` function, so the UI hook, the headless entry and tests share it.
 - `jsonValue.ts` — `JSON_VALUE(col, '$.path')`, evaluated client-side on the fetched rows.
 - `completionProvider.ts` — Monaco autocomplete.
 
@@ -47,7 +48,7 @@ Anything FetchXML can't express is done client-side after the query runs (JSON_V
 
 ### Execution (`src/hooks/`)
 
-- `useQueryExecution.ts` — runs SELECTs: generate FetchXML, call `dataverseAPI.fetchXmlQuery`, clean rows, resolve columns, paging ("load more" via paging cookie), and fallbacks (virtual-name retry, paged COUNT when Dataverse's 50,000-record aggregate limit `0x8004e023` is hit).
+- `useQueryExecution.ts` — React state around `executeSelect()` (progress, notifications, errors) plus "load more" paging via the paging cookie (`fetchNextPage`).
 - `useDmlExecution.ts` — INSERT/UPDATE/DELETE: resolves target records with a FetchXML query, then runs the Web API calls in batches (`batchSize` setting). Above a threshold derived from `batchSize` it asks for confirmation first (`DmlConfirmDialog`).
 - `useToolboxAPI.ts` — `useConnection`, `useToolboxEvents` (host events via `toolboxAPI.events.on()`). Use these rather than subscribing to host events directly in components.
 - `useTheme.ts` — follows the PPTB theme, including live `settings:updated` changes.
@@ -77,9 +78,13 @@ These caused real bugs; check new result-handling code against them:
 
 - `package.json` is the PPTB manifest. `pptb-validate` requires `displayName`, `description`, `main` (`index.html`, relative to `dist/`), `icon`, an allowed `license`, non-empty `contributors`, and `configurations.repository` + `configurations.readmeUrl` (a `raw.githubusercontent.com` URL). The npm-style top-level `repository` object is separate.
 - `icon` (`icon.svg`) must exist in `dist/` after a build. Vite copies it from `public/icon.svg`.
-- Only `dist/` and `npm-shrinkwrap.json` are published (`files`). If a `pptb.config.json` is added (inter-tool invocation or agent/MCP integration), it must be added to `files` too.
-- `features.minAPI` isn't set; set it to the highest PPTB API version the tool actually requires if newer host APIs are used.
+- Only `dist/`, `npm-shrinkwrap.json` and `pptb.config.json` are published (`files`).
+- `features.minAPI` isn't set; set it to the highest PPTB API version the tool actually requires if newer host APIs are used. The MCP entry doesn't need it: hosts without the MCP server ignore `agents`.
 - Release: bump `version` in `package.json`, `npm run finalize-package`, add a `CHANGELOG.md` entry (`## [x.y.z] - YYYY-MM-DD` with `### Added/Fixed` sections), commit as `Release x.y.z`. Then `npm run build` → `npx pptb-validate` → `npm publish`. **Publishing is irreversible — confirm with the maintainer before running `npm publish`.**
+
+## MCP / headless entry
+
+`pptb.config.json` exposes the tool to the PPTB MCP server (`agents`, headless only, two-way). PPTB imports `dist/headless.js` in Node, installs `window.dataverseAPI`/`window.toolboxAPI` for the connection the agent picked, and calls `invokeHeadless(input, context)` from `src/headless.ts`. Keep that entry free of React, Monaco and DOM code; it should only import from `src/sql/`. It runs SELECT only (DML needs the window's confirmation) and returns the `returnTopic` shape; keep the two in sync, PPTB validates the result against it.
 
 ## Git workflow
 

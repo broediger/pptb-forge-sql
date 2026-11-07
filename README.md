@@ -113,6 +113,30 @@ DELETE FROM contact WHERE statecode = 1
 
 ---
 
+## Use from AI agents (MCP)
+
+Forge SQL can be called by MCP clients such as Claude Code, Claude Desktop or VS Code through the Power Platform ToolBox MCP server. Agents can run **SELECT only**: INSERT, UPDATE and DELETE are rejected, because they need the preview and confirmation of the tool window. Queries run headless (no window opens) against a saved ToolBox connection that you pick.
+
+1. In Power Platform ToolBox, open the **MCP Server** page and start the server. Note the address and the `X-MCP-Auth-Token` value.
+2. Connect your client. Claude Desktop and VS Code can be set up from that page; for Claude Code:
+
+    ```bash
+    claude mcp add --transport http pptb http://127.0.0.1:7339/mcp --header "X-MCP-Auth-Token: <token>"
+    ```
+
+3. Ask the agent to query Dataverse. It lists your connections (`pptb_list_connections`), asks which one to use, signs in if needed, and calls the `forge-sql` tool.
+
+Tool input:
+
+| Parameter | Required | Description                                                     |
+| --------- | -------- | --------------------------------------------------------------- |
+| `sql`     | yes      | A single SELECT statement                                       |
+| `maxRows` | no       | Maximum rows to return (default 500, at most 5000)              |
+
+The result contains `status`, `rows` (only the result columns, with nulls filled in), `columns`, `rowCount`, `moreRecords`, the generated `fetchXml`, a `summary` and `executionTimeMs`, or `error` when the query fails. Only the first page from Dataverse (up to 5,000 rows) is read; `moreRecords` tells the agent to narrow the query or use `TOP`.
+
+---
+
 ## Installation
 
 ```bash
