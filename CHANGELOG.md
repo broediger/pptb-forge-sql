@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.0] - 2026-11-07
 
 ### Added
 - The split between the SQL editor and the results can be dragged to give either more room, like in SSMS. Arrow keys move it when it has focus, a double-click resets it, and the height is remembered between sessions. (#28)
