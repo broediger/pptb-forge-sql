@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Double-clicking a result column's resize handle fits the column to its header and longest value (up to 1,000px; drag for wider). The handle is also easier to grab, and clicking it no longer sorts the column.
 - AI agents can run SELECT queries through the Power Platform ToolBox MCP server (e.g. from Claude Code, Claude Desktop or VS Code). Queries run headless against the saved connection the user picks and return the rows, columns and generated FetchXML. INSERT, UPDATE and DELETE are rejected. See "Use from AI agents (MCP)" in the README.
 
 ### Fixed
