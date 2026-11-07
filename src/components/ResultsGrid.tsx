@@ -10,6 +10,7 @@ import {
     type Header,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { createTextMeasurer, fitColumnWidth } from '../utils/columnFit';
 
 interface ResultsGridProps {
     data: Record<string, unknown>[];
@@ -66,21 +67,42 @@ function isNullish(value: unknown): boolean {
 
 // ── Column resize handle ──
 
-function ResizeHandle<T>({ header, isDark }: { header: Header<T, unknown>; isDark: boolean }) {
+function ResizeHandle<T>({
+    header,
+    isDark,
+    onAutoFit,
+}: {
+    header: Header<T, unknown>;
+    isDark: boolean;
+    onAutoFit: () => void;
+}) {
+    // A 12px invisible grab area with the visible 4px bar at its right edge,
+    // so the handle is easier to hit without looking any different.
     return (
         <div
             onMouseDown={header.getResizeHandler()}
             onTouchStart={header.getResizeHandler()}
-            className={`absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none ${
-                header.column.getIsResizing()
-                    ? isDark
-                        ? 'bg-blue-500'
-                        : 'bg-blue-400'
-                    : isDark
-                      ? 'bg-gray-600 hover:bg-gray-500'
-                      : 'bg-gray-300 hover:bg-gray-400'
-            }`}
-        />
+            // Clicking the handle shouldn't sort the column.
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => {
+                e.stopPropagation();
+                onAutoFit();
+            }}
+            title="Drag to resize, double-click to fit the content"
+            className="group absolute right-0 top-0 h-full w-3 flex justify-end cursor-col-resize select-none touch-none"
+        >
+            <div
+                className={`h-full w-1 ${
+                    header.column.getIsResizing()
+                        ? isDark
+                            ? 'bg-blue-500'
+                            : 'bg-blue-400'
+                        : isDark
+                          ? 'bg-gray-600 group-hover:bg-gray-500'
+                          : 'bg-gray-300 group-hover:bg-gray-400'
+                }`}
+            />
+        </div>
     );
 }
 
@@ -194,6 +216,23 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
         enableColumnResizing: true,
     });
 
+    // Double-clicking a resize handle fits the column to its header and values.
+    const autoFitColumn = useCallback(
+        (columnId: string) => {
+            const tableEl = tableContainerRef.current?.querySelector('[role="table"]');
+            const measure = createTextMeasurer(tableEl ? getComputedStyle(tableEl).font : '14px sans-serif');
+            const width = fitColumnWidth({
+                header: columnId,
+                values: data.map((row) => (isNullish(row[columnId]) ? 'null' : formatCellValue(row[columnId]))),
+                measure,
+                // GUID cells have an "open record" button next to the text.
+                cellExtra: guidColumns.has(columnId) && connectionUrl ? 22 : 0,
+            });
+            table.setColumnSizing((prev) => ({ ...prev, [columnId]: width }));
+        },
+        [data, guidColumns, connectionUrl, table],
+    );
+
     const rowVirtualizer = useVirtualizer({
         count: table.getRowModel().rows.length,
         getScrollElement: () => tableContainerRef.current,
@@ -260,7 +299,11 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                                                 {sorted === 'asc' && <span className="text-gray-400">▲</span>}
                                                 {sorted === 'desc' && <span className="text-gray-400">▼</span>}
                                             </span>
-                                            <ResizeHandle header={header} isDark={isDark} />
+                                            <ResizeHandle
+                                                header={header}
+                                                isDark={isDark}
+                                                onAutoFit={() => autoFitColumn(header.column.id)}
+                                            />
                                         </div>
                                     );
                                 })}
