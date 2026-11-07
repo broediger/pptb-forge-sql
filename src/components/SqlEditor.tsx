@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type * as MonacoType from 'monaco-editor';
 import { createSqlCompletionProvider } from '../sql/completionProvider';
+import { DEFAULT_EDITOR_HEIGHT } from '../utils/editorSplit';
 
 // Module-level flag so we only register the completion provider once, regardless
 // of how many times SqlEditor mounts or remounts (Bug 6).
@@ -14,6 +15,8 @@ interface SqlEditorProps {
     defaultValue?: string;
     editorRef?: React.MutableRefObject<MonacoType.editor.IStandaloneCodeEditor | null>;
     theme?: 'light' | 'dark';
+    /** Editor height in px (the split between editor and results). */
+    height?: number;
 }
 
 export function SqlEditor({
@@ -23,6 +26,7 @@ export function SqlEditor({
     defaultValue = 'SELECT TOP 10 * FROM account',
     editorRef: externalEditorRef,
     theme,
+    height = DEFAULT_EDITOR_HEIGHT,
 }: SqlEditorProps) {
     const internalEditorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
 
@@ -199,7 +203,7 @@ export function SqlEditor({
                 </span>
             </div>
             <Editor
-                height="200px"
+                height={`${height}px`}
                 defaultLanguage="sql"
                 defaultValue={defaultValue}
                 theme={theme === 'dark' ? 'vs-dark' : 'light'}

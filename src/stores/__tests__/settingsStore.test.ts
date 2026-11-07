@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { DEFAULT_EDITOR_HEIGHT } from '../../utils/editorSplit';
 
 // Fake PPTB settings API backed by an in-memory map. `get` resolves only when
 // released, so tests can control when the saved settings "arrive".
@@ -57,7 +58,13 @@ describe('settingsStore persistence', () => {
         await flush();
         await flush();
 
-        const expected = { batchSize: 200, quotedIdentifiers: true, showFetchXml: true, csvDelimiter: ';' };
+        const expected = {
+            batchSize: 200,
+            quotedIdentifiers: true,
+            showFetchXml: true,
+            csvDelimiter: ';',
+            editorHeight: DEFAULT_EDITOR_HEIGHT,
+        };
         expect(store.getState().settings).toEqual(expected);
         expect(settings.data.forgeSettings).toEqual(expected);
     });
@@ -96,6 +103,7 @@ describe('settingsStore persistence', () => {
             quotedIdentifiers: true,
             showFetchXml: false,
             csvDelimiter: ';',
+            editorHeight: DEFAULT_EDITOR_HEIGHT,
         });
     });
 

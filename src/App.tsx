@@ -15,6 +15,7 @@ import { useHistoryStore } from './stores/historyStore';
 import { useSchemaStore } from './stores/schemaStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { exportToCsv, exportToJson, type CsvDelimiter } from './utils/export';
+import { DEFAULT_EDITOR_HEIGHT, KEYBOARD_STEP, dragEditorHeight, storedEditorHeight } from './utils/editorSplit';
 import { CsvExportMenu } from './components/CsvExportMenu';
 import { useConnection, useToolboxEvents } from './hooks/useToolboxAPI';
 import { useTheme } from './hooks/useTheme';
@@ -366,6 +367,56 @@ export default function App() {
     const csvDelimiter = useSettingsStore((s) => s.settings.csvDelimiter);
     const updateSetting = useSettingsStore((s) => s.updateSetting);
 
+    // Editor/results split (#28). The height follows the pointer while
+    // dragging and is saved to the settings when the drag ends.
+    const savedEditorHeight = useSettingsStore((s) => s.settings.editorHeight);
+    const [dragEditorHeightPx, setDragEditorHeightPx] = useState<number | null>(null);
+    const editorHeight = dragEditorHeightPx ?? storedEditorHeight(savedEditorHeight);
+    const resultsAreaRef = useRef<HTMLDivElement>(null);
+    const splitDragRef = useRef<{ startY: number; startHeight: number; resultsHeight: number } | null>(null);
+
+    const handleSplitPointerDown = useCallback(
+        (e: React.PointerEvent<HTMLDivElement>) => {
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            splitDragRef.current = {
+                startY: e.clientY,
+                startHeight: editorHeight,
+                resultsHeight: resultsAreaRef.current?.clientHeight ?? 0,
+            };
+            setDragEditorHeightPx(editorHeight);
+        },
+        [editorHeight],
+    );
+    const handleSplitPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        const drag = splitDragRef.current;
+        if (!drag) return;
+        setDragEditorHeightPx(dragEditorHeight(drag.startHeight, e.clientY - drag.startY, drag.resultsHeight));
+    }, []);
+    const handleSplitPointerUp = useCallback(
+        (e: React.PointerEvent<HTMLDivElement>) => {
+            const drag = splitDragRef.current;
+            if (!drag) return;
+            splitDragRef.current = null;
+            const height = dragEditorHeight(drag.startHeight, e.clientY - drag.startY, drag.resultsHeight);
+            if (height !== drag.startHeight) updateSetting('editorHeight', height);
+            setDragEditorHeightPx(null);
+        },
+        [updateSetting],
+    );
+    const handleSplitKeyDown = useCallback(
+        (e: React.KeyboardEvent<HTMLDivElement>) => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            e.preventDefault();
+            const step = e.key === 'ArrowUp' ? -KEYBOARD_STEP : KEYBOARD_STEP;
+            updateSetting(
+                'editorHeight',
+                dragEditorHeight(editorHeight, step, resultsAreaRef.current?.clientHeight ?? 0),
+            );
+        },
+        [editorHeight, updateSetting],
+    );
+
     const handleExportCsv = useCallback(
         (delimiter: CsvDelimiter) => {
             if (!activeTabResults.results || exporting) return;
@@ -698,10 +749,34 @@ export default function App() {
                             onOpen={handleOpenQuery}
                             editorRef={editorRef}
                             theme={theme}
+                            height={editorHeight}
                             defaultValue={
                                 queryTabs.find((t) => t.id === activeQueryTabId)?.sql ?? 'SELECT TOP 10 * FROM account'
                             }
                         />
+                    </div>
+
+                    {/* Editor/results split: drag, arrow keys, double-click to reset (#28) */}
+                    <div
+                        role="separator"
+                        aria-orientation="horizontal"
+                        aria-label="Resize the editor"
+                        aria-valuenow={editorHeight}
+                        tabIndex={0}
+                        title="Drag to resize the editor, double-click to reset"
+                        onPointerDown={handleSplitPointerDown}
+                        onPointerMove={handleSplitPointerMove}
+                        onPointerUp={handleSplitPointerUp}
+                        onPointerCancel={handleSplitPointerUp}
+                        onDoubleClick={() => updateSetting('editorHeight', DEFAULT_EDITOR_HEIGHT)}
+                        onKeyDown={handleSplitKeyDown}
+                        className={`shrink-0 h-1.5 flex items-center justify-center cursor-row-resize select-none touch-none outline-none ${
+                            isDark
+                                ? 'bg-neutral-800 hover:bg-indigo-500/40 focus-visible:bg-indigo-500/40'
+                                : 'bg-gray-100 hover:bg-indigo-200 focus-visible:bg-indigo-200'
+                        }`}
+                    >
+                        <div className={`h-0.5 w-8 rounded ${isDark ? 'bg-neutral-600' : 'bg-gray-300'}`} />
                     </div>
 
                     {/* Tab bar */}
@@ -759,7 +834,9 @@ export default function App() {
                     </div>
 
                     {/* Tab content */}
-                    <div className={`flex-1 min-h-0 overflow-auto ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+                    <div
+                        ref={resultsAreaRef}
+                        className={`flex-1 min-h-0 overflow-auto ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
                         {activeTab === 'results' && (
                             <>
                                 {/* DML progress indicator */}
