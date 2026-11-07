@@ -163,8 +163,8 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                     enableSorting: true,
                     enableResizing: true,
                     size: 180,
+                    // No maxSize: long values (JSON, descriptions) need wide columns (#26).
                     minSize: 60,
-                    maxSize: 600,
                     sortingFn: (rowA, rowB, columnId) => {
                         const a = rowA.getValue(columnId);
                         const b = rowB.getValue(columnId);
