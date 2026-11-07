@@ -97,3 +97,34 @@ describe('resolveMaxRows', () => {
         expect(resolveMaxRows(input)).toBe(expected);
     });
 });
+
+describe('runHeadlessQuery with a client-side filter', () => {
+    it('stops at maxRows and flags moreRecords', async () => {
+        const calls: string[] = [];
+        const query: FetchXmlQueryFn = async (fetchXml) => {
+            calls.push(fetchXml);
+            if (fetchXml.includes('owneridname')) {
+                throw new Error(
+                    "'account' entity doesn't contain attribute with Name = 'owneridname' and NameMapping = 'Logical'. (0x80041103)",
+                );
+            }
+            const row = (name: string) => ({
+                name,
+                _ownerid_value: 'u',
+                '_ownerid_value@OData.Community.Display.V1.FormattedValue': 'Ada',
+            });
+            return {
+                value: [row('a'), row('b'), row('c')],
+                '@Microsoft.Dynamics.CRM.fetchxmlpagingcookie': '<cookie pagenumber="2" />',
+            };
+        };
+        const result = await runHeadlessQuery(
+            { sql: "SELECT name FROM account WHERE owneridname = 'Ada'", maxRows: 2 },
+            query,
+        );
+        expect(calls).toHaveLength(2);
+        expect(result.rows).toEqual([{ name: 'a' }, { name: 'b' }]);
+        expect(result.moreRecords).toBe(true);
+        expect(result.summary).toMatch(/^Showing the first 2 matches/);
+    });
+});

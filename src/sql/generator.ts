@@ -540,8 +540,20 @@ export function generateFetchXml(ast: SelectStatement): string {
         }
     }
 
-    // JOIN link-entities
-    for (const join of ast.joins) {
+    // JOIN link-entities. A join whose ON condition refers to an earlier
+    // join (`JOIN account a ON a.accountid = o.accountid`) is nested inside
+    // that join's link-entity; otherwise it links to the root entity.
+    const joinRefs = ast.joins.map((j) => j.alias ?? j.table);
+    const isJoinSide = (col: ColumnRef, index: number) =>
+        !!col.table && (col.table === ast.joins[index].table || col.table === joinRefs[index]);
+    const joinIndexOf = (tableRef: string) => {
+        const byAlias = joinRefs.indexOf(tableRef);
+        return byAlias !== -1 ? byAlias : ast.joins.findIndex((j) => !j.alias && j.table === tableRef);
+    };
+    const children = new Map<number | null, number[]>();
+    const linkAttrs: string[] = [];
+
+    ast.joins.forEach((join, index) => {
         if (join.type === 'RIGHT') {
             throw new SqlParseError(
                 'RIGHT JOIN is not supported in FetchXML. Restructure the query to use LEFT JOIN instead.',
@@ -550,18 +562,11 @@ export function generateFetchXml(ast: SelectStatement): string {
             );
         }
 
-        const joinRef = join.alias ?? join.table;
-        const linkType = join.type === 'LEFT' || join.type === 'OUTER' ? 'outer' : 'inner';
-        const name = xmlEscape(join.table);
-        // Always emit an alias (default to the table name) so the joined
-        // entity's attributes come back under a deterministic `<alias>.<attr>`
-        // key instead of a Dataverse auto-generated one (e.g. `contact1.`).
-        const alias = ` alias="${xmlEscape(joinRef)}"`;
-
         // Resolve ON condition to determine from/to attributes
         // FetchXML: from = attribute on the link-entity, to = attribute on the parent entity
         let fromAttr = '';
         let toAttr = '';
+        let parentCol: ColumnRef | null = null;
         const on = join.on;
         if (on.kind === 'comparison' && on.operator === '=') {
             const leftCol = on.left;
@@ -571,45 +576,72 @@ export function generateFetchXml(ast: SelectStatement): string {
             }
             if (rightRef !== null && typeof rightRef === 'object' && 'column' in rightRef) {
                 const rRef = rightRef as ColumnRef;
-                const joinTableOrAlias = join.alias ?? join.table;
-                if (rRef.table && (rRef.table === join.table || rRef.table === joinTableOrAlias)) {
+                if (isJoinSide(rRef, index)) {
                     // Right side is the joined entity
                     fromAttr = rRef.column; // link-entity's attribute
                     toAttr = leftCol.column; // parent entity's attribute
-                } else if (leftCol.table && (leftCol.table === join.table || leftCol.table === joinTableOrAlias)) {
+                    parentCol = leftCol;
+                } else if (isJoinSide(leftCol, index)) {
                     // Left side is the joined entity
                     fromAttr = leftCol.column; // link-entity's attribute
                     toAttr = rRef.column; // parent entity's attribute
+                    parentCol = rRef;
                 } else {
                     // Fallback: assume left is parent, right is link-entity
                     toAttr = leftCol.column;
                     fromAttr = rRef.column;
+                    parentCol = leftCol;
                 }
             }
         }
 
+        // The parent is the entity the other side of ON belongs to.
+        let parent: number | null = null;
+        if (parentCol?.table && parentCol.table !== ast.from.table && parentCol.table !== fromAlias) {
+            const target = joinIndexOf(parentCol.table);
+            if (target >= index) {
+                throw new SqlParseError(
+                    `JOIN ${joinRefs[index]} refers to '${parentCol.table}', which is joined ${target === index ? 'by this same JOIN' : 'later'}. Join '${parentCol.table}' first.`,
+                    0,
+                    0,
+                );
+            }
+            if (target !== -1) parent = target;
+        }
+        children.set(parent, [...(children.get(parent) ?? []), index]);
+
+        const linkType = join.type === 'LEFT' || join.type === 'OUTER' ? 'outer' : 'inner';
         const fromPart = fromAttr ? ` from="${xmlEscape(fromAttr)}"` : '';
         const toPart = toAttr ? ` to="${xmlEscape(toAttr)}"` : '';
+        // Always emit an alias (default to the table name) so the joined
+        // entity's attributes come back under a deterministic `<alias>.<attr>`
+        // key instead of a Dataverse auto-generated one (e.g. `contact1.`).
+        linkAttrs.push(
+            `name="${xmlEscape(join.table)}"${fromPart}${toPart} link-type="${linkType}" alias="${xmlEscape(joinRefs[index])}"`,
+        );
+    });
 
-        // Columns belonging to this join
-        const joinCols = joinColumnMap.get(joinRef) ?? [];
-        const joinHasWildcard = joinCols.some((c) => !isAggregateExpr(c) && (c as ColumnRef).column === '*');
-
-        if (joinCols.length === 0) {
-            lines.push(`    <link-entity name="${name}"${fromPart}${toPart} link-type="${linkType}"${alias} />`);
-        } else if (joinHasWildcard) {
-            lines.push(`    <link-entity name="${name}"${fromPart}${toPart} link-type="${linkType}"${alias}>`);
-            lines.push(`      <all-attributes />`);
-            lines.push(`    </link-entity>`);
+    const emitJoin = (index: number, indent: string) => {
+        const joinCols = joinColumnMap.get(joinRefs[index]) ?? [];
+        const nested = children.get(index) ?? [];
+        const open = `${indent}<link-entity ${linkAttrs[index]}`;
+        if (joinCols.length === 0 && nested.length === 0) {
+            lines.push(`${open} />`);
+            return;
+        }
+        lines.push(`${open}>`);
+        if (joinCols.some((c) => !isAggregateExpr(c) && (c as ColumnRef).column === '*')) {
+            lines.push(`${indent}  <all-attributes />`);
         } else {
-            lines.push(`    <link-entity name="${name}"${fromPart}${toPart} link-type="${linkType}"${alias}>`);
             for (const col of joinCols) {
-                const line = generateAttributeLine(col, groupByColumns, '      ', groupByAliases.get(col));
+                const line = generateAttributeLine(col, groupByColumns, `${indent}  `, groupByAliases.get(col));
                 if (line) lines.push(line);
             }
-            lines.push(`    </link-entity>`);
         }
-    }
+        for (const child of nested) emitJoin(child, `${indent}  `);
+        lines.push(`${indent}</link-entity>`);
+    };
+    for (const index of children.get(null) ?? []) emitJoin(index, '    ');
 
     // WHERE filter
     if (ast.where) {

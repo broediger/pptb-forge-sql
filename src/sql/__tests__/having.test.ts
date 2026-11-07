@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { tokenize } from '../lexer';
 import { parse } from '../parser';
 import { generateFetchXml } from '../generator';
-import { planHaving, applyHaving, withPage, describeHaving } from '../having';
+import { planHaving, applyHaving, withPage } from '../having';
+import { describeCondition } from '../condition';
 import type { HavingPlan } from '../having';
 
 const plan = (sql: string): HavingPlan => {
@@ -143,9 +144,9 @@ describe('withPage', () => {
     });
 });
 
-describe('describeHaving', () => {
+describe('describeCondition', () => {
     it('renders the condition as SQL', () => {
         const p = plan("SELECT name FROM t GROUP BY name HAVING COUNT(*) > 1 AND name != 'x'");
-        expect(describeHaving(p.having)).toBe("(COUNT(*) > 1 AND name != 'x')");
+        expect(describeCondition(p.having)).toBe("(COUNT(*) > 1 AND name != 'x')");
     });
 });

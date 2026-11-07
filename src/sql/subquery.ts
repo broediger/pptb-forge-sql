@@ -1,6 +1,7 @@
 import type { ColumnRef, InSubqueryExpr, LiteralValue, OrderByItem, SelectStatement, WhereExpr } from './types';
 import { SqlParseError, isAggregateExpr, isJsonValueExpr } from './types';
 import { getRequestedColumns, resolveColumnKey } from './columnResolution';
+import { primaryKeyOf } from './primaryKey';
 
 // ── IN (SELECT …) support ──
 //
@@ -61,7 +62,7 @@ export function subqueryScanStatement(sub: SelectStatement): SelectStatement {
     return {
         ...sub,
         distinct: false,
-        orderBy: [{ column: { column: `${sub.from.table}id` }, direction: 'ASC' }],
+        orderBy: [{ column: { column: primaryKeyOf(sub.from.table) }, direction: 'ASC' }],
     };
 }
 

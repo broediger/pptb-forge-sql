@@ -42,6 +42,8 @@ Run a single test file with `npx vitest run src/sql/__tests__/parser.test.ts`.
 - `columnResolution.ts` — post-processes Dataverse rows: renames OData annotations (`…@OData.Community.Display.V1.FormattedValue` → `_formatted`, plus `xxxname` aliases), exposes lookup GUIDs under clean names, and maps requested columns to result keys, including recovery of virtual `xxxname` columns.
 - `selectExecution.ts` — `executeSelect()` runs a parsed SELECT end to end: subquery expansion, HAVING, the virtual-name retries, the 50,000-record aggregate fallbacks, and returns rows, columns and the (annotated) FetchXML. Dataverse is reached only through an injected `fetchXmlQuery` function, so the UI hook, the headless entry and tests share it.
 - `jsonValue.ts` — `JSON_VALUE(col, '$.path')`, evaluated client-side on the fetched rows.
+- `virtualFilter.ts` — WHERE on virtual `xxxname` columns: after Dataverse rejects one (`0x80041103`), those conditions move client-side and are evaluated on the formatted value of the base column. `condition.ts` holds the shared client-side evaluator (also used by HAVING in `having.ts`).
+- `primaryKey.ts` — primary key for ordering paged scans (`activityid` for activity tables).
 - `completionProvider.ts` — Monaco autocomplete.
 
 Anything FetchXML can't express is done client-side after the query runs (JSON_VALUE, virtual name columns, count fallbacks). Keep such logic in pure functions under `src/sql/` so it can be unit-tested; the hooks only orchestrate.
@@ -69,6 +71,8 @@ These caused real bugs; check new result-handling code against them:
 - Formatted values (option set labels, lookup names) only come back when the base column is requested; `xxxname` isn't a real attribute.
 - Multi-page scans need an explicit `<order>`, or page 2 fails with `0x80041129`. Pass the paging cookie unwrapped (see `injectPagingIntoFetchXml`).
 - FetchXML has no column-to-column comparisons, no subqueries, and no RIGHT JOIN.
+- Activity tables (`email`, `task`, `opportunityclose`, ...) have no `<table>id`; their key is `activityid`. Use `primaryKeyOf()` rather than building `${table}id`.
+- An unknown attribute in a condition or `<order>` errors with `0x80041103`; the message is expected to name it (`'<entity>' entity doesn't contain attribute with Name = '<attr>'`), and `virtualFilter.ts` parses it to learn which columns to avoid (it falls back to treating every `xxxname` WHERE column as virtual if the name is missing). The code also assumes an unknown `<attribute>` in the SELECT list is ignored silently; if one errors instead, the same retry leaves it out. Neither has been confirmed against a live environment yet.
 
 ## Debugging inside PPTB
 

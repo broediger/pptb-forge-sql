@@ -46,17 +46,21 @@ const SQL_KEYWORDS = [
     'DELETE',
 ];
 
+// A table name with optional schema/database qualifiers and brackets:
+// `account`, `dbo.account`, `[dbo].[account]`. The last part is the table.
+const QUALIFIED_TABLE = String.raw`(?:\[?\w+\]?\.)*\[?(\w+)\]?`;
+
 /** Extract the primary table name from a FROM clause in SQL text. */
-function extractFromTableName(sqlText: string): string | null {
-    const match = sqlText.match(/\bFROM\s+(\w+)/i);
+export function extractFromTableName(sqlText: string): string | null {
+    const match = sqlText.match(new RegExp(String.raw`\bFROM\s+${QUALIFIED_TABLE}`, 'i'));
     return match ? match[1] : null;
 }
 
 /** Extract all table aliases: { alias → tableName } from "FROM table alias" and "JOIN table alias" */
-function extractAliases(sqlText: string): Map<string, string> {
+export function extractAliases(sqlText: string): Map<string, string> {
     const map = new Map<string, string>();
     // Match FROM/JOIN table [AS] alias patterns
-    const re = /\b(?:FROM|JOIN)\s+(\w+)\s+(?:AS\s+)?(\w+)/gi;
+    const re = new RegExp(String.raw`\b(?:FROM|JOIN)\s+${QUALIFIED_TABLE}\s+(?:AS\s+)?(\w+)`, 'gi');
     let m;
     while ((m = re.exec(sqlText)) !== null) {
         map.set(m[2].toLowerCase(), m[1].toLowerCase());
@@ -79,8 +83,9 @@ function isColumnContext(linePrefix: string): boolean {
  * Returns true when the cursor directly follows FROM or JOIN, expecting a
  * table/entity name next.
  */
-function isTableContext(linePrefix: string): boolean {
-    return /\b(?:FROM|JOIN)\s+\w*$/i.test(linePrefix);
+export function isTableContext(linePrefix: string): boolean {
+    // Also after a schema prefix: `FROM dbo.` or `JOIN [dbo].`.
+    return /\b(?:FROM|JOIN)\s+(?:\[?\w+\]?\.)*\[?\w*$/i.test(linePrefix);
 }
 
 /**
@@ -120,6 +125,18 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
 
             const store = useSchemaStore.getState();
 
+            // ── Table/entity context: right after FROM or JOIN ────────────────
+            if (isTableContext(linePrefix)) {
+                const suggestions: monaco.languages.CompletionItem[] = store.entities.map((entity) => ({
+                    label: entity.logicalName,
+                    kind: KIND_CLASS,
+                    insertText: entity.logicalName,
+                    detail: entity.displayName,
+                    range,
+                }));
+                return { suggestions };
+            }
+
             // ── Dot context: "account." or "a." → suggest attributes ─────────
             const dotPrefix = getDotPrefix(linePrefix);
             if (dotPrefix) {
@@ -144,18 +161,6 @@ export function createSqlCompletionProvider(): monaco.languages.CompletionItemPr
 
                 // Attributes loading — return empty for now, next keystroke will have them
                 return { suggestions: [] };
-            }
-
-            // ── Table/entity context: right after FROM or JOIN ────────────────
-            if (isTableContext(linePrefix)) {
-                const suggestions: monaco.languages.CompletionItem[] = store.entities.map((entity) => ({
-                    label: entity.logicalName,
-                    kind: KIND_CLASS,
-                    insertText: entity.logicalName,
-                    detail: entity.displayName,
-                    range,
-                }));
-                return { suggestions };
             }
 
             // ── Column/attribute context (no dot prefix) ──────────────────────

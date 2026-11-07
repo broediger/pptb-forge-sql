@@ -13,6 +13,8 @@ interface QueryExecutionState {
     executionTime: number | null;
     rowCount: number | null;
     pagingCookie: string | null;
+    /** More rows match but can't be paged (client-side filter); shown under the grid. */
+    limitNote: string | null;
 }
 
 export interface ExecuteResult {
@@ -43,6 +45,7 @@ export function useQueryExecution(): QueryExecutionReturn {
         executionTime: null,
         rowCount: null,
         pagingCookie: null,
+        limitNote: null,
     });
 
     const pageRef = useRef<number>(1);
@@ -61,6 +64,7 @@ export function useQueryExecution(): QueryExecutionReturn {
             executionTime: null,
             rowCount: null,
             pagingCookie: null,
+            limitNote: null,
         }));
 
         pageRef.current = 1;
@@ -96,6 +100,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 executionTime,
                 rowCount: result.rows.length,
                 pagingCookie: result.pagingCookie,
+                limitNote: result.limitNote ?? null,
                 isExecuting: false,
             }));
 

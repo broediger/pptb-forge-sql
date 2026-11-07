@@ -16,6 +16,8 @@ interface ResultsGridProps {
     columns: string[];
     onLoadMore?: () => void;
     hasMore?: boolean;
+    /** Shown under the grid when more rows exist that can't be loaded with Load More. */
+    moreNote?: string;
     isLoading?: boolean;
     isDark?: boolean;
     connectionUrl?: string | null;
@@ -102,6 +104,7 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
     columns,
     onLoadMore,
     hasMore = false,
+    moreNote,
     isLoading = false,
     isDark = false,
     connectionUrl,
@@ -365,6 +368,14 @@ export const ResultsGrid: React.FC<ResultsGridProps> = ({
                 >
                     <Spinner />
                     Loading...
+                </div>
+            )}
+
+            {moreNote && !isLoading && (
+                <div
+                    className={`px-3 py-2 text-xs border-t ${isDark ? 'text-gray-400 border-gray-700' : 'text-gray-500 border-gray-100'}`}
+                >
+                    {moreNote}
                 </div>
             )}
 
