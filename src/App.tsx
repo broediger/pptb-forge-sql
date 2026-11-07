@@ -29,6 +29,8 @@ interface TabResults {
     error: string | null;
     executionTime: number | null;
     rowCount: number | null;
+    /** More rows match but can't be paged (client-side filter). */
+    limitNote: string | null;
     dmlResult: import('./hooks/useDmlExecution').DmlResult | null;
     dmlError: string | null;
 }
@@ -40,6 +42,7 @@ const EMPTY_TAB_RESULTS: TabResults = {
     error: null,
     executionTime: null,
     rowCount: null,
+    limitNote: null,
     dmlResult: null,
     dmlError: null,
 };
@@ -112,6 +115,7 @@ export default function App() {
                     error: queryExec.error,
                     executionTime: queryExec.executionTime,
                     rowCount: queryExec.rowCount,
+                    limitNote: queryExec.limitNote,
                 },
             }));
         }
@@ -122,6 +126,7 @@ export default function App() {
         queryExec.executionTime,
         queryExec.rowCount,
         queryExec.columns,
+        queryExec.limitNote,
     ]);
 
     // Sync DML results into the tab that started the execution
@@ -916,6 +921,7 @@ export default function App() {
                                         columns={activeTabResults.columns}
                                         onLoadMore={queryExec.pagingCookie ? queryExec.loadNextPage : undefined}
                                         hasMore={queryExec.pagingCookie != null}
+                                        moreNote={activeTabResults.limitNote ?? undefined}
                                         isLoading={queryExec.isExecuting}
                                         isDark={isDark}
                                         connectionUrl={connection?.url}

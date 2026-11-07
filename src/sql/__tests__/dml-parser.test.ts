@@ -459,3 +459,12 @@ describe('statement type routing', () => {
         }
     });
 });
+
+describe('schema-qualified DML targets (#25)', () => {
+    it('drops a dbo. prefix on INSERT, UPDATE and DELETE', () => {
+        const ins = parseStatement(tokenize("INSERT INTO dbo.account (name) VALUES ('x')")) as InsertStatement;
+        const upd = parseStatement(tokenize("UPDATE dbo.account SET name = 'x' WHERE name = 'y'")) as UpdateStatement;
+        const del = parseStatement(tokenize("DELETE FROM [dbo].[account] WHERE name = 'y'")) as DeleteStatement;
+        expect([ins.table, upd.table, del.table]).toEqual(['account', 'account', 'account']);
+    });
+});

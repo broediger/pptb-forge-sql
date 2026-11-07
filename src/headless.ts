@@ -70,6 +70,8 @@ export async function runHeadlessQuery(
             onFetchXml: (xml) => {
                 fetchXml = xml;
             },
+            // A client-side filtered read can stop once the agent's rows are found.
+            rowLimit: maxRows,
         });
         // Keep only the result columns: rows also carry the raw OData keys the
         // grid hides, and Dataverse omits nulls, so fill those in explicitly.
@@ -82,9 +84,11 @@ export async function runHeadlessQuery(
             rows,
             columns: result.columns,
             rowCount: rows.length,
-            moreRecords: truncated || result.pagingCookie !== null,
+            moreRecords: truncated || result.pagingCookie !== null || result.limitNote !== undefined,
             fetchXml: result.fetchXml,
-            summary: truncated ? `${result.summary}; returning the first ${rows.length}` : result.summary,
+            summary: truncated
+                ? `${result.summary}; returning the first ${rows.length}`
+                : (result.limitNote ?? result.summary),
             executionTimeMs: Math.round(performance.now() - start),
         };
     } catch (err) {

@@ -182,19 +182,20 @@ function makeWalker(tokens: Token[]) {
         );
     }
 
-    // Parse a possibly-dotted identifier: [table.]column
+    // Parse a possibly-dotted identifier: [[schema.]table.]column. Schema and
+    // database qualifiers (`dbo.account.name`) are dropped, as for table names.
     function parseColumnRef(): ColumnRef {
-        const first = expectIdentifierOrKeyword();
-        if (check(TokenType.DOT)) {
+        const parts = [expectIdentifierOrKeyword().value];
+        while (check(TokenType.DOT)) {
             advance();
             if (check(TokenType.STAR)) {
                 advance();
-                return { table: first.value, column: '*' };
+                return { table: parts[parts.length - 1], column: '*' };
             }
-            const second = expectIdentifierOrKeyword();
-            return { table: first.value, column: second.value };
+            parts.push(expectIdentifierOrKeyword().value);
         }
-        return { column: first.value };
+        if (parts.length === 1) return { column: parts[0] };
+        return { table: parts[parts.length - 2], column: parts[parts.length - 1] };
     }
 
     // After 'IN (' with SELECT next: consume the subquery tokens up to the
@@ -390,12 +391,24 @@ function makeWalker(tokens: Token[]) {
         return left;
     }
 
+    // Parse a table name, dropping any schema/database qualifiers
+    // (`dbo.account`, `[dbo].[account]`): Dataverse has no schemas.
+    function parseTableName(): string {
+        let name = expectIdentifierOrKeyword().value;
+        while (check(TokenType.DOT)) {
+            advance();
+            name = expectIdentifierOrKeyword().value;
+        }
+        return name;
+    }
+
     return {
         peek,
         advance,
         check,
         expect,
         expectIdentifierOrKeyword,
+        parseTableName,
         parseLiteral,
         parseColumnRef,
         parseWhereOr,
@@ -407,8 +420,17 @@ function makeWalker(tokens: Token[]) {
 
 function parseSelect(tokens: Token[]): SelectStatement {
     const w = makeWalker(tokens);
-    const { peek, advance, check, expect, expectIdentifierOrKeyword, parseColumnRef, parseWhereOr, isJsonValueCall } =
-        w;
+    const {
+        peek,
+        advance,
+        check,
+        expect,
+        expectIdentifierOrKeyword,
+        parseTableName,
+        parseColumnRef,
+        parseWhereOr,
+        isJsonValueCall,
+    } = w;
 
     function parseOptionalAlias(): string | undefined {
         if (check(TokenType.AS)) {
@@ -497,8 +519,7 @@ function parseSelect(tokens: Token[]): SelectStatement {
     }
 
     function parseFrom(): FromClause {
-        const tableToken = expectIdentifierOrKeyword();
-        const table = tableToken.value;
+        const table = parseTableName();
         let alias: string | undefined;
         if (peek().type === TokenType.AS) {
             advance();
@@ -535,8 +556,7 @@ function parseSelect(tokens: Token[]): SelectStatement {
                 break;
             }
 
-            const tableToken = expectIdentifierOrKeyword();
-            const table = tableToken.value;
+            const table = parseTableName();
 
             let alias: string | undefined;
             if (check(TokenType.AS)) {
@@ -666,13 +686,13 @@ function parseSelect(tokens: Token[]): SelectStatement {
 // ── INSERT parser ──
 
 function parseInsert(tokens: Token[]): InsertStatement {
-    const { advance, check, expect, expectIdentifierOrKeyword, parseLiteral, peek } = makeWalker(tokens);
+    const { advance, check, expect, expectIdentifierOrKeyword, parseTableName, parseLiteral, peek } =
+        makeWalker(tokens);
 
     expect(TokenType.INSERT);
     expect(TokenType.INTO);
 
-    const tableToken = expectIdentifierOrKeyword();
-    const table = tableToken.value;
+    const table = parseTableName();
 
     // Column list
     expect(TokenType.LPAREN);
@@ -725,12 +745,12 @@ function parseInsert(tokens: Token[]): InsertStatement {
 // ── UPDATE parser ──
 
 function parseUpdate(tokens: Token[]): UpdateStatement {
-    const { advance, check, expect, expectIdentifierOrKeyword, parseLiteral, parseWhereOr, peek } = makeWalker(tokens);
+    const { advance, check, expect, expectIdentifierOrKeyword, parseTableName, parseLiteral, parseWhereOr, peek } =
+        makeWalker(tokens);
 
     expect(TokenType.UPDATE);
 
-    const tableToken = expectIdentifierOrKeyword();
-    const table = tableToken.value;
+    const table = parseTableName();
 
     expect(TokenType.SET);
 
@@ -770,13 +790,12 @@ function parseUpdate(tokens: Token[]): UpdateStatement {
 // ── DELETE parser ──
 
 function parseDelete(tokens: Token[]): DeleteStatement {
-    const { advance, check, expect, expectIdentifierOrKeyword, parseWhereOr, peek } = makeWalker(tokens);
+    const { advance, check, expect, parseTableName, parseWhereOr, peek } = makeWalker(tokens);
 
     expect(TokenType.DELETE);
     expect(TokenType.FROM);
 
-    const tableToken = expectIdentifierOrKeyword();
-    const table = tableToken.value;
+    const table = parseTableName();
 
     // WHERE is required
     if (!check(TokenType.WHERE)) {

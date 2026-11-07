@@ -508,3 +508,42 @@ describe('parse', () => {
         });
     });
 });
+
+// ── Schema-qualified table names (#25) ────────────────────────────────────────
+
+describe('schema-qualified table names', () => {
+    it('drops a dbo. prefix on FROM', () => {
+        const stmt = parseSQL('SELECT name FROM dbo.account a');
+        expect(stmt.from).toEqual({ table: 'account', alias: 'a' });
+    });
+
+    it('drops bracketed and multi-part prefixes', () => {
+        expect(parseSQL('SELECT name FROM [dbo].[account]').from).toEqual({ table: 'account' });
+        expect(parseSQL('SELECT name FROM org.dbo.account AS a').from).toEqual({ table: 'account', alias: 'a' });
+    });
+
+    it('drops a dbo. prefix on JOIN tables', () => {
+        const stmt = parseSQL(
+            'SELECT c.activityid FROM opportunityclose c ' +
+                'INNER JOIN dbo.opportunity AS o ON o.opportunityid = c.opportunityid ' +
+                'LEFT JOIN dbo.account a ON a.accountid = o.accountid',
+        );
+        expect(stmt.joins.map((j) => [j.table, j.alias])).toEqual([
+            ['opportunity', 'o'],
+            ['account', 'a'],
+        ]);
+    });
+
+    it('drops schema qualifiers on column references', () => {
+        const stmt = parseSQL('SELECT dbo.account.name, dbo.account.* FROM dbo.account WHERE dbo.account.statecode = 0');
+        expect(stmt.columns).toEqual([
+            { table: 'account', column: 'name' },
+            { table: 'account', column: '*' },
+        ]);
+        expect((stmt.where as ComparisonExpr).left).toEqual({ table: 'account', column: 'statecode' });
+    });
+
+    it('rejects a trailing dot', () => {
+        expect(() => parseSQL('SELECT name FROM dbo. WHERE x = 1')).toThrow(SqlParseError);
+    });
+});

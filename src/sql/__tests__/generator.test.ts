@@ -647,3 +647,78 @@ describe('generateFetchXml', () => {
         });
     });
 });
+
+describe('schema-qualified table names (#25)', () => {
+    it('generates FetchXML for the query from issue #25', () => {
+        const xml = strip(
+            toFetchXml(`select
+c.activityid
+,c.competitoridname
+,c.statecodename
+,a.owneridname
+,o.estimatedclosedate
+from opportunityclose c
+inner join dbo.opportunity as o on o.opportunityid = c.opportunityid
+inner join dbo.account as a on a.accountid = o.accountid
+where c.competitoridname like '%Nihon%'`),
+        );
+        expect(xml).toContain('entity name="opportunityclose"');
+        expect(xml).toContain('link-entity name="opportunity"');
+        expect(xml).toContain('link-entity name="account"');
+        expect(xml).not.toContain('dbo');
+    });
+});
+
+describe('chained joins', () => {
+    it('nests a join that links to an earlier join inside that link-entity (#25)', () => {
+        const xml = strip(
+            toFetchXml(`select c.activityid, o.name, a.name from opportunityclose c
+                inner join dbo.opportunity as o on o.opportunityid = c.opportunityid
+                inner join dbo.account as a on a.accountid = o.accountid`),
+        );
+        expect(xml).toContain(
+            '<link-entity name="opportunity" from="opportunityid" to="opportunityid" link-type="inner" alias="o"> ' +
+                '<attribute name="name" /> ' +
+                '<link-entity name="account" from="accountid" to="accountid" link-type="inner" alias="a"> ' +
+                '<attribute name="name" /> </link-entity> </link-entity>',
+        );
+    });
+
+    it('nests several levels deep and keeps LEFT JOIN outer', () => {
+        const xml = strip(
+            toFetchXml(`SELECT c.fullname FROM contact c
+                JOIN account a ON a.accountid = c.parentcustomerid
+                LEFT JOIN systemuser u ON u.systemuserid = a.ownerid
+                LEFT JOIN businessunit b ON b.businessunitid = u.businessunitid`),
+        );
+        expect(xml).toMatch(
+            /alias="a"> <link-entity name="systemuser" .*link-type="outer" alias="u"> <link-entity name="businessunit" .*alias="b" \/> <\/link-entity> <\/link-entity>/,
+        );
+    });
+
+    it('keeps joins on the FROM table at the root, side by side', () => {
+        const xml = strip(
+            toFetchXml(`SELECT a.name FROM account a
+                JOIN contact c ON c.contactid = a.primarycontactid
+                JOIN systemuser u ON u.systemuserid = a.ownerid`),
+        );
+        expect(xml).toMatch(/alias="c" \/> <link-entity name="systemuser"[^>]*alias="u" \/> <\/entity>/);
+    });
+
+    it('accepts the ON sides in either order', () => {
+        const xml = strip(
+            toFetchXml(`SELECT c.fullname FROM contact c
+                JOIN account a ON c.parentcustomerid = a.accountid
+                JOIN systemuser u ON a.ownerid = u.systemuserid`),
+        );
+        expect(xml).toMatch(/alias="a"> <link-entity name="systemuser" from="systemuserid" to="ownerid"/);
+    });
+
+    it('rejects a join that refers to a later join', () => {
+        expect(() =>
+            toFetchXml(`SELECT c.fullname FROM contact c
+                JOIN account a ON a.ownerid = u.systemuserid
+                JOIN systemuser u ON u.systemuserid = c.ownerid`),
+        ).toThrow(/refers to 'u', which is joined later/);
+    });
+});

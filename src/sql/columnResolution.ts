@@ -141,6 +141,22 @@ export function getRequestedColumns(stmt: SelectStatement): string[] | null {
 }
 
 /**
+ * Whether a column name looks like a virtual display name: `owneridname`
+ * (lookup) or `statecodename` (option set), the formatted value of the base
+ * column without the trailing `name`. Real attributes can match too
+ * (`fullname`), so callers try the literal name first.
+ */
+export function isVirtualNameColumn(column: string): boolean {
+    return column.length > 4 && column.toLowerCase().endsWith('name');
+}
+
+/** Lowercase the attribute part of a result key (`o.StateCode` → `o.statecode`); link aliases keep their case. */
+function lowerAttribute(key: string): string {
+    const dot = key.lastIndexOf('.');
+    return key.slice(0, dot + 1) + key.slice(dot + 1).toLowerCase();
+}
+
+/**
  * Resolve a single user-requested column name to an actual key in the result
  * data. Virtual names like "owneridname" are mapped to their Dataverse
  * annotation equivalents (e.g. _ownerid_value_formatted). Returns null when the
@@ -150,18 +166,21 @@ export function resolveColumnKey(col: string, availableColumns: string[], allKey
     if (availableColumns.includes(col)) {
         return col;
     }
+    // Dataverse returns attribute names in lowercase.
+    const lower = lowerAttribute(col);
+    if (lower !== col && availableColumns.includes(lower)) return lower;
     // Try virtual name resolution:
     // xxxname → _xxx_value_formatted  (lookup display name)
     // xxxname → xxx_formatted          (option set label)
-    if (col.endsWith('name') && col.length > 4) {
-        const base = col.slice(0, -4);
+    if (isVirtualNameColumn(lower)) {
+        const base = lower.slice(0, -4);
         const lookupFmt = `_${base}_value_formatted`;
         const optionFmt = `${base}_formatted`;
         if (allKeys.includes(lookupFmt)) return lookupFmt;
         if (allKeys.includes(optionFmt)) return optionFmt;
     }
     // xxxid → _xxxid_value (lookup GUID without _value suffix)
-    const lookupVal = `_${col}_value`;
+    const lookupVal = `_${lower}_value`;
     if (allKeys.includes(lookupVal)) return lookupVal;
     // Not found
     return null;
@@ -210,7 +229,7 @@ export function unresolvedVirtualColumns(
     const allKeys = rowKeys(rows);
     const set = new Set<string>();
     for (const col of requested) {
-        if (col.length > 4 && col.endsWith('name') && resolveColumnKey(col, availableColumns, allKeys) === null) {
+        if (isVirtualNameColumn(col) && resolveColumnKey(col, availableColumns, allKeys) === null) {
             set.add(col);
         }
     }
@@ -243,7 +262,7 @@ export function rewriteVirtualColumns(stmt: SelectStatement, onlyColumns?: Set<s
         const name = col.column;
         const matchName = col.alias ? name : (requested?.[i] ?? name);
         // If column ends with 'name' and is more than just 'name', strip it
-        if (name.length > 4 && name.endsWith('name') && (!onlyColumns || onlyColumns.has(matchName))) {
+        if (isVirtualNameColumn(name) && (!onlyColumns || onlyColumns.has(matchName))) {
             const base = name.slice(0, -4); // e.g. owneridname → ownerid
             changed = true;
             return { ...col, column: base };

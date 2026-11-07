@@ -21,7 +21,23 @@ import {
     IN_CHUNK_SIZE,
     MAX_SUBQUERY_ROWS,
 } from './subquery';
-import { planHaving, applyHaving, withPage, describeHaving, HAVING_PAGE_SIZE, MAX_HAVING_GROUPS } from './having';
+import { planHaving, applyHaving, withPage, HAVING_PAGE_SIZE, MAX_HAVING_GROUPS } from './having';
+import { describeCondition } from './condition';
+import { primaryKeyOf, withActivityKey } from './primaryKey';
+import {
+    planVirtualFilter,
+    assertVirtualFilterSupported,
+    matchesVirtualFilter,
+    finishVirtualFilter,
+    hasMissingAttributes,
+    quotedList,
+    type MissingAttributes,
+    type VirtualFilterPlan,
+    emptyMissingAttributes,
+    recordMissingAttribute,
+    ATTRIBUTE_MISSING_CODE,
+    MAX_VIRTUAL_FILTER_ROWS,
+} from './virtualFilter';
 
 /**
  * Runs a SELECT against Dataverse: subquery expansion, HAVING, the virtual
@@ -45,7 +61,16 @@ export interface SelectExecutionOptions {
     onProgress?: (rowCount: number) => void;
     /** Called with the query's FetchXML before it's sent, so a failure can still show it. */
     onFetchXml?: (fetchXml: string) => void;
+    /**
+     * Max rows returned when WHERE is filtered client-side (virtual name
+     * columns), where Dataverse paging can't continue the filter. Defaults to
+     * `DEFAULT_CLIENT_FILTER_ROWS`.
+     */
+    rowLimit?: number;
 }
+
+/** Rows returned by a client-side filtered query without TOP: one Dataverse page's worth. */
+export const DEFAULT_CLIENT_FILTER_ROWS = 5000;
 
 export interface SelectExecutionResult {
     rows: Record<string, unknown>[];
@@ -58,6 +83,11 @@ export interface SelectExecutionResult {
     jsonColumns: JsonValueColumn[];
     /** Short outcome description, e.g. "12 rows returned". */
     summary: string;
+    /**
+     * Set when more rows match than were returned and they can't be paged
+     * (a client-side filter stopped at `rowLimit`): a note for the user.
+     */
+    limitNote?: string;
 }
 
 /**
@@ -247,6 +277,46 @@ export function fetchNextPage(
     return runFetchXml(query, injectPagingIntoFetchXml(fetchXml, pagingCookie, page), jsonColumns);
 }
 
+function isMissingAttributeError(err: unknown, attribute?: string): err is Error {
+    if (!(err instanceof Error) || !err.message.includes(ATTRIBUTE_MISSING_CODE)) return false;
+    return attribute === undefined || err.message.toLowerCase().includes(`'${attribute.toLowerCase()}'`);
+}
+
+/**
+ * The attributes a 0x80041103 error says to avoid, added to `missing` (a new
+ * set by default). Null when `err` isn't such an error or taught nothing new.
+ */
+function learnMissing(err: unknown, missing: MissingAttributes = emptyMissingAttributes()): MissingAttributes | null {
+    return isMissingAttributeError(err) && recordMissingAttribute(missing, err) ? missing : null;
+}
+
+function fetchXmlOf(stmt: SelectStatement): string {
+    return generateFetchXml(applyEntityAliases(stmt));
+}
+
+/**
+ * Send page 1 of a scan ordered by the primary key. When Dataverse rejects
+ * the guessed `<table>id` (a custom activity table), retry with `activityid`.
+ * Returns the result and the FetchXML later pages must use.
+ */
+async function firstScanPage<T>(
+    stmt: SelectStatement,
+    run: (fetchXml: string) => Promise<T>,
+    onFetchXml?: (fetchXml: string) => void,
+): Promise<{ result: T; fetchXml: string }> {
+    const fetchXml = fetchXmlOf(stmt);
+    onFetchXml?.(fetchXml);
+    try {
+        return { result: await run(fetchXml), fetchXml };
+    } catch (err) {
+        const swapped = isMissingAttributeError(err, `${stmt.from.table}id`) ? withActivityKey(stmt) : null;
+        if (!swapped) throw err;
+        const activityFetchXml = fetchXmlOf(swapped);
+        onFetchXml?.(activityFetchXml);
+        return { result: await run(activityFetchXml), fetchXml: activityFetchXml };
+    }
+}
+
 /**
  * Fallback for `COUNT(*)` when Dataverse rejects the aggregate query with
  * the 50,000-source-record limit (0x8004e023). Re-issues the same SELECT as
@@ -259,7 +329,7 @@ async function runPagedCountFallback(
     onProgress?: (rowCount: number) => void,
 ): Promise<{ total: number; pageCount: number; scanFetchXml: string }> {
     const agg = stmt.columns[0] as AggregateExpr;
-    const idCol = `${stmt.from.table}id`;
+    const idCol = primaryKeyOf(stmt.from.table);
     // For COUNT(<col>), SQL semantics ignore NULLs — preserve that in
     // the paged scan by adding `<col> IS NOT NULL` to the WHERE. For
     // COUNT(*), no extra filter is needed.
@@ -283,7 +353,7 @@ async function runPagedCountFallback(
     // accepts (literal vs. virtual rewrite), so don't re-apply
     // rewriteVirtualColumns here — doing so would re-strip names like
     // `orb_regardingobjectlogicalname` that are real attributes.
-    const scanFetchXml = generateFetchXml(applyEntityAliases(stmtForScan));
+    let scanFetchXml = '';
 
     let total = 0;
     let page = 1;
@@ -291,8 +361,12 @@ async function runPagedCountFallback(
     let pageCount = 0;
 
     while (true) {
-        const xml = page === 1 ? scanFetchXml : injectPagingIntoFetchXml(scanFetchXml, pagingCookie!, page);
-        const result = await query(xml);
+        let result: FetchXmlQueryResult;
+        if (page === 1) {
+            ({ result, fetchXml: scanFetchXml } = await firstScanPage(stmtForScan, query));
+        } else {
+            result = await query(injectPagingIntoFetchXml(scanFetchXml, pagingCookie!, page));
+        }
         const pageRows = rawRows(result);
         total += pageRows.length;
         pageCount += 1;
@@ -317,7 +391,7 @@ async function runPagedGroupByCountFallback(
     groupColumn: ColumnRef,
     onProgress?: (rowCount: number) => void,
 ): Promise<{ counts: Map<string, number>; scannedRows: number; pageCount: number; scanFetchXml: string }> {
-    const idCol = `${stmt.from.table}id`;
+    const idCol = primaryKeyOf(stmt.from.table);
     // Strip aggregation, keep WHERE, add primary key order for paging.
     const stmtForScan: SelectStatement = {
         ...stmt,
@@ -329,7 +403,7 @@ async function runPagedGroupByCountFallback(
     };
     // Caller passes the effective stmt (already resolved to literal or
     // virtual-rewritten names by `executeSelect`), so don't re-rewrite here.
-    const scanFetchXml = generateFetchXml(applyEntityAliases(stmtForScan));
+    let scanFetchXml = '';
 
     const counts = new Map<string, number>();
     // For lookup columns Dataverse returns the GUID under `_<col>_value`
@@ -343,8 +417,12 @@ async function runPagedGroupByCountFallback(
     let pageCount = 0;
 
     while (true) {
-        const xml = page === 1 ? scanFetchXml : injectPagingIntoFetchXml(scanFetchXml, pagingCookie!, page);
-        const result = await query(xml);
+        let result: FetchXmlQueryResult;
+        if (page === 1) {
+            ({ result, fetchXml: scanFetchXml } = await firstScanPage(stmtForScan, query));
+        } else {
+            result = await query(injectPagingIntoFetchXml(scanFetchXml, pagingCookie!, page));
+        }
         const rawPageRows = rawRows(result);
         const pageRows = applyReverseEntityAliases(cleanRows(rawPageRows), stmt.from.table);
         for (const row of pageRows) {
@@ -363,38 +441,94 @@ async function runPagedGroupByCountFallback(
     return { counts, scannedRows, pageCount, scanFetchXml };
 }
 
+interface FetchAllRowsOptions {
+    /** Max rows read (before `matches`) before giving up; defaults to the subquery limit. */
+    maxRows?: number;
+    /** Error message when `maxRows` is exceeded. */
+    tooManyRows?: string;
+    /** Keep only the rows passing this test (a client-side WHERE). */
+    matches?: (row: Record<string, unknown>) => boolean;
+    /** Stop reading once this many rows were kept (TOP after a client-side WHERE). */
+    stopAfter?: number;
+    /** Rows kept so far, after each page. */
+    onProgress?: (rowCount: number) => void;
+    /** The FetchXML of the first page, as sent (including the paging order). */
+    onFetchXml?: (fetchXml: string) => void;
+}
+
+interface ReadAllResult {
+    rows: Record<string, unknown>[];
+    fetchXml: string;
+    pageCount: number;
+    /** Rows read from Dataverse, before `matches`. */
+    scannedRows: number;
+}
+
 /**
- * Read every page of a query. Used for subquery values and for split
- * queries, where the results must be complete before they're merged.
+ * Read every page of a query. Used for subquery values, for split queries,
+ * and for client-side WHERE filters, where the results must be complete.
  */
 async function fetchAllRows(
     query: FetchXmlQueryFn,
     stmt: SelectStatement,
     jsonColumns: JsonValueColumn[],
-): Promise<{ rows: Record<string, unknown>[]; fetchXml: string }> {
-    // Paging cookies need a stable order; TOP queries return one page.
-    const needsOrder = !stmt.orderBy && !stmt.distinct && stmt.top === undefined;
-    const scanStmt: SelectStatement = needsOrder
-        ? { ...stmt, orderBy: [{ column: { column: `${stmt.from.table}id` }, direction: 'ASC' }] }
-        : stmt;
-    const fetchXml = generateFetchXml(applyEntityAliases(scanStmt));
+    options: FetchAllRowsOptions = {},
+): Promise<ReadAllResult> {
+    const maxRows = options.maxRows ?? MAX_SUBQUERY_ROWS;
+    // Paging cookies need a stable, unique order: the primary key, after any
+    // ORDER BY as a tiebreaker. TOP queries return one page; aggregates and
+    // DISTINCT can't take an extra order column.
+    const primaryKey = primaryKeyOf(stmt.from.table);
+    const fromRef = (stmt.from.alias ?? stmt.from.table).toLowerCase();
+    const ordersByKey = stmt.orderBy?.some(
+        (o) =>
+            o.column.column.toLowerCase() === primaryKey &&
+            (!o.column.table || [fromRef, stmt.from.table.toLowerCase()].includes(o.column.table.toLowerCase())),
+    );
+    const canOrder = !stmt.distinct && stmt.top === undefined && !stmt.groupBy && !stmt.columns.some(isAggregateExpr);
+    const scanStmt: SelectStatement =
+        canOrder && !ordersByKey
+            ? { ...stmt, orderBy: [...(stmt.orderBy ?? []), { column: { column: primaryKey }, direction: 'ASC' }] }
+            : stmt;
+    let fetchXml = '';
     const rows: Record<string, unknown>[] = [];
+    let scannedRows = 0;
     let page = 1;
     let pagingCookie: string | null = null;
     while (true) {
-        const xml = page === 1 ? fetchXml : injectPagingIntoFetchXml(fetchXml, pagingCookie!, page);
-        const result = await runFetchXml(query, xml, jsonColumns);
-        rows.push(...applyReverseEntityAliases(result.rows, stmt.from.table));
-        if (rows.length > MAX_SUBQUERY_ROWS) {
+        let result: Awaited<ReturnType<typeof runFetchXml>>;
+        if (page === 1) {
+            ({ result, fetchXml } = await firstScanPage(
+                scanStmt,
+                (xml) => runFetchXml(query, xml, jsonColumns),
+                options.onFetchXml,
+            ));
+        } else {
+            result = await runFetchXml(query, injectPagingIntoFetchXml(fetchXml, pagingCookie!, page), jsonColumns);
+        }
+        const pageRows = applyReverseEntityAliases(result.rows, stmt.from.table);
+        scannedRows += pageRows.length;
+        for (const row of pageRows) {
+            if (!options.matches || options.matches(row)) rows.push(row);
+        }
+        options.onProgress?.(rows.length);
+        if (options.stopAfter !== undefined && rows.length >= options.stopAfter) break;
+        if (scannedRows > maxRows) {
             throw new Error(
-                `A subquery read more than ${MAX_SUBQUERY_ROWS.toLocaleString()} rows from '${stmt.from.table}'. Add filters to narrow it.`,
+                options.tooManyRows ??
+                    `A subquery read more than ${maxRows.toLocaleString()} rows from '${stmt.from.table}'. Add filters to narrow it.`,
             );
         }
         pagingCookie = result.pagingCookie;
         if (!pagingCookie || result.rows.length === 0 || stmt.top !== undefined) break;
         page += 1;
     }
-    return { rows, fetchXml };
+    return {
+        rows: options.stopAfter !== undefined ? rows.slice(0, options.stopAfter) : rows,
+        fetchXml,
+        pageCount: page,
+        scannedRows,
+    };
 }
 
 /**
@@ -436,14 +570,187 @@ async function expandSubqueries(query: FetchXmlQueryFn, stmt: SelectStatement): 
     for (const sub of subqueries) {
         validateSubquery(sub.subquery);
         const rows: Record<string, unknown>[] = [];
+        const learned = emptyMissingAttributes();
         // Subquery scans must not get JSON_VALUE columns; those apply
         // only to the outer query's rows.
         for (const scan of await expandSubqueries(query, subqueryScanStatement(sub.subquery))) {
-            rows.push(...(await fetchAllRows(query, scan, [])).rows);
+            rows.push(...(await readAllRows(query, scan, [], learned)).rows);
         }
         values.set(sub, extractSubqueryValues(rows, sub.subquery));
     }
     return planQueries(stmt, values);
+}
+
+interface VirtualFilterRead extends ReadAllResult {
+    plan: VirtualFilterPlan;
+    /** Set when `rowLimit` cut off further matches. */
+    limitNote?: string;
+}
+
+/** Text safe inside an XML comment. */
+function commentText(text: string): string {
+    return text.replace(/--/g, '- -');
+}
+
+interface VirtualReadOptions extends Pick<FetchAllRowsOptions, 'onProgress' | 'onFetchXml'> {
+    /** Max rows to return; unset to read every match (subqueries, split queries). */
+    rowLimit?: number;
+}
+
+/**
+ * WHERE on virtual `xxxname` columns (see `virtualFilter.ts`), once `missing`
+ * holds at least one attribute Dataverse rejected. Each further 0x80041103
+ * names another attribute to avoid; the query is re-planned until it runs, or
+ * until re-planning no longer changes it. Returns null when no WHERE
+ * condition is affected. A column that isn't a display name either (its base
+ * column is rejected too, e.g. a typo) gets the first error.
+ */
+async function readWithVirtualFilter(
+    query: FetchXmlQueryFn,
+    stmt: SelectStatement,
+    jsonColumns: JsonValueColumn[],
+    missing: MissingAttributes,
+    options: VirtualReadOptions = {},
+): Promise<VirtualFilterRead | null> {
+    let plan = planVirtualFilter(stmt, missing);
+    if (!plan) return null;
+    let planXml = fetchXmlOf(plan.stmt);
+    const isSelectStar = getRequestedColumns(stmt) === null;
+
+    while (true) {
+        if (plan.unresolved.length > 0) {
+            throw missing.firstError ?? new Error(`Dataverse has no attribute ${quotedList(plan.unresolved)}.`);
+        }
+        const current = plan;
+        const cap = Math.min(current.top ?? Infinity, options.rowLimit ?? Infinity);
+        try {
+            const read = await fetchAllRows(query, current.stmt, jsonColumns, {
+                maxRows: MAX_VIRTUAL_FILTER_ROWS,
+                tooManyRows:
+                    `Filtering on ${quotedList(current.virtualColumns)} is done client-side (Dataverse has no such attribute), ` +
+                    `and the rest of the query matches more than ${MAX_VIRTUAL_FILTER_ROWS.toLocaleString()} rows. ` +
+                    `Add filters on real columns to narrow it.`,
+                matches: (row) => matchesVirtualFilter(row, current),
+                // A client-side sort needs every row before the first can be picked.
+                // Past the row limit, read one more match to know whether more exist.
+                stopAfter:
+                    current.clientOrder || cap === Infinity
+                        ? undefined
+                        : cap < (current.top ?? Infinity)
+                          ? cap + 1
+                          : cap,
+                onProgress: options.onProgress,
+                onFetchXml: options.onFetchXml,
+            });
+            let rows = current.clientOrder ? sortRows(read.rows, current.clientOrder) : read.rows;
+            const more = rows.length > cap;
+            rows = rows.slice(0, cap);
+            // Cut off by the row limit rather than by TOP: tell the user.
+            const limited = more && cap < (current.top ?? Infinity);
+            return {
+                ...read,
+                rows: finishVirtualFilter(rows, current, isSelectStar),
+                plan: current,
+                limitNote: limited
+                    ? `Showing the first ${rows.length.toLocaleString()} matches. More rows match, but the filter on ` +
+                      `${quotedList(current.virtualColumns)} runs client-side and can't be paged: add TOP or filters on real columns.`
+                    : undefined,
+            };
+        } catch (err) {
+            if (!learnMissing(err, missing)) throw err;
+            const next = planVirtualFilter(stmt, missing);
+            if (!next) throw err;
+            const nextXml = fetchXmlOf(next.stmt);
+            if (nextXml === planXml && next.unresolved.length === 0) throw err;
+            plan = next;
+            planXml = nextXml;
+        }
+    }
+}
+
+/**
+ * `fetchAllRows`, retried with a client-side filter when WHERE uses virtual
+ * name columns. `learned` carries rejected attributes across related reads
+ * (the parts of a split query), so each part doesn't fail first.
+ */
+async function readAllRows(
+    query: FetchXmlQueryFn,
+    stmt: SelectStatement,
+    jsonColumns: JsonValueColumn[],
+    learned: MissingAttributes = emptyMissingAttributes(),
+): Promise<ReadAllResult> {
+    if (hasMissingAttributes(learned)) {
+        const read = await readWithVirtualFilter(query, stmt, jsonColumns, learned);
+        if (read) return read;
+    }
+    try {
+        return await fetchAllRows(query, stmt, jsonColumns);
+    } catch (err) {
+        if (!learnMissing(err, learned)) throw err;
+        const read = await readWithVirtualFilter(query, stmt, jsonColumns, learned);
+        if (!read) throw err;
+        return read;
+    }
+}
+
+/**
+ * Dataverse returns rows but silently drops attributes when the column is
+ * encrypted and the query uses DISTINCT/aggregates, when field-level security
+ * hides it, or when it doesn't exist. Throw a clear error instead of showing
+ * an empty grid.
+ */
+function assertReadableColumns(
+    stmt: SelectStatement,
+    requestedCols: string[] | null,
+    rowCount: number,
+    resolvedCount: number,
+): void {
+    if (rowCount === 0 || resolvedCount > 0) return;
+    const requested = requestedCols?.join(', ') ?? '*';
+    const hasAggregate = stmt.columns.some((c) => 'function' in c);
+    const hint =
+        stmt.distinct || hasAggregate
+            ? ' This commonly happens when DISTINCT or aggregates are used on an encrypted column — try removing DISTINCT and the aggregate functions, or selecting the column directly.'
+            : ' The attribute(s) may be hidden by field-level security or not present on the entity.';
+    throw new Error(
+        `Query returned ${rowCount} row(s) but no readable columns for [${requested}] on '${stmt.from.table}'.${hint}`,
+    );
+}
+
+function virtualFilterResult(
+    stmt: SelectStatement,
+    read: VirtualFilterRead,
+    jsonColumns: JsonValueColumn[],
+): SelectExecutionResult {
+    const requestedCols = getRequestedColumns(stmt);
+    const allColumns = extractColumns(read.rows, requestedCols === null);
+    if (requestedCols) {
+        const resolved = resolveRequestedColumns(requestedCols, allColumns, read.rows);
+        assertReadableColumns(stmt, requestedCols, read.rows.length, resolved.length);
+    }
+    const columns = requestedCols ? displayRequestedColumns(requestedCols, allColumns, read.rows) : allColumns;
+    const virtualList = quotedList(read.plan.virtualColumns);
+    const top = read.plan.top;
+    const stop = read.limitNote
+        ? ' (stopped at the row limit)'
+        : top !== undefined && read.rows.length >= top && !read.plan.clientOrder
+          ? ' (stopped at TOP)'
+          : '';
+    const sorted = read.plan.clientOrder ? ' ORDER BY is sorted client-side.' : '';
+    return {
+        rows: read.rows,
+        columns,
+        fetchXml:
+            `<!-- WHERE ${commentText(describeCondition(read.plan.filter))} is evaluated client-side: Dataverse has no attribute ` +
+            `${commentText(virtualList)} (${ATTRIBUTE_MISSING_CODE}),\n` +
+            `     so it's read as the display name of its base column.${sorted} ${read.pageCount} page(s), ` +
+            `${read.scannedRows} row(s) read, ${read.rows.length} matched${stop}. -->\n` +
+            read.fetchXml,
+        pagingCookie: null,
+        jsonColumns,
+        summary: `${read.rows.length} of ${read.scannedRows} rows matched the client-side filter on ${virtualList}`,
+        limitNote: read.limitNote,
+    };
 }
 
 export async function executeSelect(
@@ -470,8 +777,9 @@ export async function executeSelect(
         // don't overlap; ORDER BY and TOP are applied after merging.
         let rows: Record<string, unknown>[] = [];
         let firstFetchXml = '';
+        const learned = emptyMissingAttributes();
         for (const plan of plans) {
-            const part = await fetchAllRows(query, plan, jsonColumns);
+            const part = await readAllRows(query, plan, jsonColumns, learned);
             if (!firstFetchXml) firstFetchXml = part.fetchXml;
             rows.push(...part.rows);
             if (rows.length > MAX_SUBQUERY_ROWS) {
@@ -505,7 +813,7 @@ export async function executeSelect(
     const havingPlan = planHaving(stmt);
     if (havingPlan) {
         const fetchXml = sent(generateFetchXml(applyEntityAliases(havingPlan.stmt)));
-        const havingText = describeHaving(havingPlan.having).replace(/--/g, '- -');
+        const havingText = commentText(describeCondition(havingPlan.having));
         let groups: Record<string, unknown>[];
         let annotatedFetchXml: string;
         try {
@@ -515,6 +823,13 @@ export async function executeSelect(
                 `<!-- HAVING ${havingText} is evaluated client-side (FetchXML has no HAVING).\n` +
                 `     ${read.pageCount} page(s), ${groups.length} group(s) read. -->\n${fetchXml}`;
         } catch (queryErr) {
+            // A WHERE on a virtual name column can't be filtered client-side
+            // before grouping; planVirtualFilter explains that.
+            const missing = learnMissing(queryErr);
+            if (missing) {
+                assertVirtualFilterSupported(havingPlan.stmt, missing);
+                throw queryErr;
+            }
             // Same 50,000-record aggregate limit fallback as below,
             // for `SELECT <col>, COUNT(*) … GROUP BY <col> HAVING …`.
             const isAggregateLimit = queryErr instanceof Error && queryErr.message.includes('0x8004e023');
@@ -576,7 +891,16 @@ export async function executeSelect(
         try {
             queryResult = await runFetchXml(query, fetchXml, jsonColumns);
         } catch (attrErr) {
-            const isAttrMissing = attrErr instanceof Error && attrErr.message.includes('0x80041103');
+            const isAttrMissing = isMissingAttributeError(attrErr);
+            const missing = learnMissing(attrErr);
+            if (missing) {
+                const read = await readWithVirtualFilter(query, stmt, jsonColumns, missing, {
+                    onProgress,
+                    onFetchXml: options.onFetchXml,
+                    rowLimit: options.rowLimit ?? DEFAULT_CLIENT_FILTER_ROWS,
+                });
+                if (read) return virtualFilterResult(stmt, read, jsonColumns);
+            }
             const rewrittenStmt = isAttrMissing ? rewriteVirtualColumns(stmt) : stmt;
             if (!isAttrMissing || rewrittenStmt === stmt) {
                 throw attrErr;
@@ -714,23 +1038,7 @@ export async function executeSelect(
         }
     }
 
-    // Dataverse returns rows but silently drops attributes when:
-    //  - the column is encrypted and the query uses DISTINCT/aggregates
-    //    (encrypted columns can't participate in either)
-    //  - field-level security hides the attribute from this user
-    //  - the attribute doesn't exist on the entity
-    // Detect this and surface a clear error instead of an empty grid.
-    if (rows.length > 0 && columns.length === 0) {
-        const requested = requestedCols?.join(', ') ?? '*';
-        const hasAggregate = stmt.columns.some((c) => 'function' in c);
-        const hint =
-            stmt.distinct || hasAggregate
-                ? ' This commonly happens when DISTINCT or aggregates are used on an encrypted column — try removing DISTINCT and the aggregate functions, or selecting the column directly.'
-                : ' The attribute(s) may be hidden by field-level security or not present on the entity.';
-        throw new Error(
-            `Query returned ${rows.length} row(s) but no readable columns for [${requested}] on '${stmt.from.table}'.${hint}`,
-        );
-    }
+    assertReadableColumns(stmt, requestedCols, rows.length, columns.length);
 
     // Show every requested column, including ones that are null in
     // every row (Dataverse omits nulls, so they have no result key).

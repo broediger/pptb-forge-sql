@@ -267,3 +267,15 @@ describe('column resolution — columns that are null in some or all rows', () =
         expect(unresolvedVirtualColumns(['owneridname'], extractColumns(later, false), later).size).toBe(0);
     });
 });
+
+describe('isVirtualNameColumn and mixed-case names', () => {
+    it('recognises display names regardless of case', async () => {
+        const { isVirtualNameColumn, resolveColumnKey } = await import('../columnResolution');
+        expect(isVirtualNameColumn('OwnerIdName')).toBe(true);
+        expect(isVirtualNameColumn('name')).toBe(false);
+        const keys = ['_ownerid_value', '_ownerid_value_formatted', 'statecode_formatted', 'fullname'];
+        expect(resolveColumnKey('OwnerIdName', keys, keys)).toBe('_ownerid_value_formatted');
+        expect(resolveColumnKey('StateCodeName', keys, keys)).toBe('statecode_formatted');
+        expect(resolveColumnKey('FullName', keys, keys)).toBe('fullname');
+    });
+});

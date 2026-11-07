@@ -5,6 +5,13 @@
 ### Added
 - AI agents can run SELECT queries through the Power Platform ToolBox MCP server (e.g. from Claude Code, Claude Desktop or VS Code). Queries run headless against the saved connection the user picks and return the rows, columns and generated FetchXML. INSERT, UPDATE and DELETE are rejected. See "Use from AI agents (MCP)" in the README.
 
+### Fixed
+- Schema-qualified table names (e.g. `FROM dbo.account`, `JOIN [dbo].[opportunity]`), common in queries written for SQL Server or SQL 4 CDS, failed with `Expected ON but got '.'`. The schema prefix is now ignored in FROM, JOIN, INSERT, UPDATE and DELETE, and in column references (`dbo.account.name`). Autocomplete also understands such table names. (#25)
+- A WHERE condition on a display-name column such as `owneridname`, `competitoridname` or `statecodename` failed with `0x80041103` (Dataverse has no attribute by that name). Such conditions are now evaluated client-side on the formatted value of the base column, also inside `IN (SELECT …)` subqueries: the rest of the query runs in Dataverse, and pages are read until `TOP` rows match (up to 50,000 rows read). Without TOP the first 5,000 matches are shown (for AI agents: `maxRows`), with a note that more rows match; such results can't be paged with Load More. An ORDER BY on such a column is sorted client-side. A misspelled column still gets the attribute error. Not supported together with GROUP BY, DISTINCT, aggregates or HAVING; the error says to filter on the base column instead. (#25)
+- Chained joins, where a JOIN links to an earlier join instead of the FROM table (e.g. `FROM opportunityclose c JOIN opportunity o ON … JOIN account a ON a.accountid = o.accountid`), were all linked to the root entity, so Dataverse looked for the column on the wrong table (`0x80041103`). Such joins are now nested inside the link-entity they refer to. (#25)
+- Conditions evaluated client-side (HAVING, and the display-name filter above) matched LIKE character classes such as `[A-C]%` literally, and compared two-option (yes/no) columns with `1`/`0` the wrong way round. Both now behave as in Dataverse.
+- Paged scans of activity tables (`email`, `task`, `opportunityclose`, ...) ordered by `<table>id`, which doesn't exist, so subqueries and the `COUNT(*)` fallback for more than 50,000 records failed on them. They now order by `activityid`; custom activity tables fall back to it when Dataverse rejects `<table>id`.
+
 ## [1.1.1] - 2026-10-22
 
 ### Fixed
