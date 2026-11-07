@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import type { CsvDelimiter } from '../utils/export';
+import { DEFAULT_EDITOR_HEIGHT } from '../utils/editorSplit';
 
 export interface ForgeSettings {
     batchSize: number; // DML batch size (default 50)
     quotedIdentifiers: boolean; // already supported in lexer, this is just a setting display
     showFetchXml: boolean; // auto-show FetchXML tab after execution
     csvDelimiter: CsvDelimiter; // last delimiter chosen in the CSV export menu
+    editorHeight: number; // SQL editor height in px, set by dragging the editor/results split
 }
 
 const DEFAULT_SETTINGS: ForgeSettings = {
@@ -13,6 +15,7 @@ const DEFAULT_SETTINGS: ForgeSettings = {
     quotedIdentifiers: true,
     showFetchXml: false,
     csvDelimiter: ',',
+    editorHeight: DEFAULT_EDITOR_HEIGHT,
 };
 
 interface SettingsStore {
