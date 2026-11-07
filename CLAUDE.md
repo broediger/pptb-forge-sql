@@ -72,7 +72,7 @@ These caused real bugs; check new result-handling code against them:
 - Multi-page scans need an explicit `<order>`, or page 2 fails with `0x80041129`. Pass the paging cookie unwrapped (see `injectPagingIntoFetchXml`).
 - FetchXML has no column-to-column comparisons, no subqueries, and no RIGHT JOIN.
 - Activity tables (`email`, `task`, `opportunityclose`, ...) have no `<table>id`; their key is `activityid`. Use `primaryKeyOf()` rather than building `${table}id`.
-- An unknown attribute in a condition or `<order>` errors with `0x80041103`; the message is expected to name it (`'<entity>' entity doesn't contain attribute with Name = '<attr>'`), and `virtualFilter.ts` parses it to learn which columns to avoid (it falls back to treating every `xxxname` WHERE column as virtual if the name is missing). The code also assumes an unknown `<attribute>` in the SELECT list is ignored silently; if one errors instead, the same retry leaves it out. Neither has been confirmed against a live environment yet.
+- An unknown attribute in a condition, `<order>` or link-entity `to` errors with `0x80041103` and names it, e.g. `'OpportunityClose' entity doesn't contain attribute with Name = 'accountid' and NameMapping = 'Logical' (look up attribute by name is case-sensitive)` (confirmed live). `virtualFilter.ts` parses that message to learn which columns to avoid; it falls back to treating every `xxxname` WHERE column as virtual if the name is missing. The code also assumes an unknown `<attribute>` in the SELECT list is ignored silently; that part isn't confirmed yet, and if one errors instead, the same retry leaves it out.
 
 ## Debugging inside PPTB
 
