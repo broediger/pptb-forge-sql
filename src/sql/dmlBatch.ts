@@ -4,8 +4,10 @@
 // PPTB's executeTransaction is used rather than executeBatch: for a
 // transaction PPTB accepts the shortened response Dataverse sends when an
 // operation fails, while a plain batch that stops at its first error may be
-// rejected as malformed. Operations carry no extra headers, because PPTB asks
-// the user to consent to every additional header.
+// rejected as malformed. Operations carry extra headers only for query hints
+// (#36), because PPTB asks the user to consent to every additional header.
+
+import type { DmlHints } from './types';
 
 /** Dataverse accepts at most 1000 operations per batch. */
 export const MAX_BATCH_OPERATIONS = 1000;
@@ -16,6 +18,7 @@ export interface BatchOperation {
     url: string;
     body?: Record<string, unknown>;
     contentId: string;
+    headers?: Record<string, string>;
 }
 
 /** Shape of `DataverseAPI.BatchResult`. */
@@ -61,6 +64,23 @@ export function updateOperations(entitySet: string, ids: string[], values: Recor
 
 export function deleteOperations(entitySet: string, ids: string[]): BatchOperation[] {
     return ids.map((id, i) => ({ method: 'DELETE', url: `${entitySet}(${id})`, contentId: String(i + 1) }));
+}
+
+/**
+ * Request headers for a statement's query hints, or undefined when it needs
+ * none. Dataverse doesn't apply headers on the $batch request to the
+ * operations inside it, so they go on every operation (`withHeaders`).
+ */
+export function hintHeaders(hints: DmlHints | undefined): Record<string, string> | undefined {
+    if (!hints?.bypassCustomPluginExecution) return undefined;
+    return { 'MSCRM.BypassCustomPluginExecution': 'true' };
+}
+
+export function withHeaders(
+    operations: BatchOperation[],
+    headers: Record<string, string> | undefined,
+): BatchOperation[] {
+    return headers ? operations.map((op) => ({ ...op, headers: { ...headers } })) : operations;
 }
 
 /**

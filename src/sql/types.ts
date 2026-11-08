@@ -205,11 +205,23 @@ export interface SelectStatement {
 
 // ── DML statements ──
 
+/**
+ * Query hints from `OPTION (USE HINT('...'))` on INSERT, UPDATE and DELETE,
+ * named as in SQL 4 CDS.
+ */
+export interface DmlHints {
+    /** BYPASS_CUSTOM_PLUGIN_EXECUTION: send `MSCRM.BypassCustomPluginExecution: true`. */
+    bypassCustomPluginExecution?: boolean;
+    /** BATCH_SIZE_<n>: records per batch for this statement. */
+    batchSize?: number;
+}
+
 export interface InsertStatement {
     type: 'insert';
     table: string;
     columns: string[];
     values: LiteralValue[][]; // multiple rows for multi-row insert
+    hints?: DmlHints;
 }
 
 export interface SetClause {
@@ -222,12 +234,14 @@ export interface UpdateStatement {
     table: string;
     set: SetClause[];
     where: WhereExpr; // required — parser rejects UPDATE without WHERE
+    hints?: DmlHints;
 }
 
 export interface DeleteStatement {
     type: 'delete';
     table: string;
     where: WhereExpr; // required — parser rejects DELETE without WHERE
+    hints?: DmlHints;
 }
 
 export type Statement = SelectStatement | InsertStatement | UpdateStatement | DeleteStatement;

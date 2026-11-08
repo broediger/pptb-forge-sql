@@ -81,6 +81,28 @@ UPDATE and DELETE without a WHERE clause are rejected at parse time. For operati
 | Batch progress         | >10 rows       | Always          | Always        |
 | Cancel mid-batch       | >10 rows       | Yes             | Yes           |
 
+### Batches and transactions
+
+INSERT, UPDATE and DELETE are sent as Web API `$batch` requests of **Batch Size** records (Settings, up to 1,000). Each batch is one transaction: it is committed completely or not at all. If a batch fails, the run stops and the error names the batch and the failing record; earlier batches stay committed. For up to 1,000 records the confirmation dialog offers **All or nothing**, which runs every record in one transaction. Older Power Platform ToolBox versions without batch support write one record per request.
+
+### Query hints
+
+INSERT, UPDATE and DELETE accept SQL 4 CDS-style hints in a trailing `OPTION` clause:
+
+```sql
+UPDATE account SET description = 'migrated' WHERE statecode = 0
+OPTION (USE HINT('BYPASS_CUSTOM_PLUGIN_EXECUTION', 'BATCH_SIZE_200'))
+```
+
+| Hint | Effect |
+|------|--------|
+| `BYPASS_CUSTOM_PLUGIN_EXECUTION` | Skips custom synchronous plugins and workflows (`MSCRM.BypassCustomPluginExecution` header). Needs the `prvBypassCustomPlugins` privilege, which only System Administrators have by default. Power Platform ToolBox asks you once to allow the header. A statement that bypasses plugins always asks for confirmation, INSERT included. |
+| `BATCH_SIZE_<n>` | Records per batch for this statement (1–1,000), instead of the Batch Size setting. |
+
+To bypass plugins on every statement, turn on **Bypass custom plugins on Insert/Update/Delete** in the settings; each statement still asks for confirmation.
+
+Other hints are rejected with an error. `CONTINUE_ON_ERROR` isn't supported, because every batch runs as a transaction.
+
 ---
 
 ## Examples

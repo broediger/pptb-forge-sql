@@ -12,8 +12,16 @@ export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = f
     const [typeInput, setTypeInput] = useState('');
     const [singleTransaction, setSingleTransaction] = useState(false);
 
-    const { operation, table, affectedCount, sampleRecords, typeToConfirm, batchSize, canRunAsOneTransaction } =
-        confirmation;
+    const {
+        operation,
+        table,
+        affectedCount,
+        sampleRecords,
+        typeToConfirm,
+        batchSize,
+        canRunAsOneTransaction,
+        bypassCustomPlugins,
+    } = confirmation;
     const isDelete = operation === 'DELETE';
 
     const confirmDisabled = typeToConfirm ? typeInput !== table : false;
@@ -131,6 +139,19 @@ export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = f
                             autoFocus
                         />
                     </div>
+                )}
+
+                {/* Query hints */}
+                {bypassCustomPlugins && (
+                    <p
+                        className={`text-xs mb-4 px-2 py-1.5 rounded ${isDark ? 'bg-yellow-900/40 text-yellow-200' : 'bg-yellow-50 text-yellow-800'}`}
+                    >
+                        Custom plugins are bypassed (
+                        {bypassCustomPlugins === 'hint'
+                            ? 'BYPASS_CUSTOM_PLUGIN_EXECUTION'
+                            : "'Bypass custom plugins' setting"}
+                        ). Needs the Bypass Custom Plugins privilege; PPTB may ask you to allow the request header.
+                    </p>
                 )}
 
                 {/* How the records are committed */}

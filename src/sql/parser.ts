@@ -6,6 +6,7 @@ import {
     InsertStatement,
     UpdateStatement,
     DeleteStatement,
+    DmlHints,
     SetClause,
     Statement,
     SelectExpr,
@@ -683,11 +684,94 @@ function parseSelect(tokens: Token[]): SelectStatement {
     return stmt;
 }
 
+// ── DML query hints ──
+
+/** Most operations Dataverse accepts in one $batch. */
+const MAX_HINT_BATCH_SIZE = 1000;
+
+/**
+ * Optional trailing `OPTION (USE HINT('A', 'B'), USE HINT('C'))` on a DML
+ * statement. OPTION, USE and HINT aren't keywords, so a column or alias with
+ * one of these names still works elsewhere.
+ */
+function parseDmlHints(w: ReturnType<typeof makeWalker>): DmlHints | undefined {
+    const { peek, advance, check, expect } = w;
+    const isWord = (offset: number, word: string) =>
+        peek(offset).type === TokenType.IDENTIFIER && peek(offset).value.toUpperCase() === word;
+
+    if (!(isWord(0, 'OPTION') && peek(1).type === TokenType.LPAREN)) return undefined;
+    advance();
+    expect(TokenType.LPAREN);
+
+    const hints: DmlHints = {};
+    for (;;) {
+        if (!(isWord(0, 'USE') && isWord(1, 'HINT'))) {
+            const t = peek();
+            throw new SqlParseError(
+                `Expected USE HINT('...') in OPTION but got '${t.value || t.type}'`,
+                t.line,
+                t.column,
+            );
+        }
+        advance();
+        advance();
+        expect(TokenType.LPAREN);
+        for (;;) {
+            applyHint(hints, expect(TokenType.STRING));
+            if (!check(TokenType.COMMA)) break;
+            advance();
+        }
+        expect(TokenType.RPAREN);
+        if (!check(TokenType.COMMA)) break;
+        advance();
+    }
+    expect(TokenType.RPAREN);
+    return hints;
+}
+
+function applyHint(hints: DmlHints, token: Token): void {
+    const name = token.value.trim().toUpperCase();
+    if (name === 'BYPASS_CUSTOM_PLUGIN_EXECUTION') {
+        hints.bypassCustomPluginExecution = true;
+        return;
+    }
+    const batch = /^BATCH_SIZE_(\d+)$/.exec(name);
+    if (batch) {
+        const size = Number(batch[1]);
+        if (size < 1 || size > MAX_HINT_BATCH_SIZE) {
+            throw new SqlParseError(
+                `BATCH_SIZE must be between 1 and ${MAX_HINT_BATCH_SIZE}`,
+                token.line,
+                token.column,
+            );
+        }
+        hints.batchSize = size;
+        return;
+    }
+    if (name === 'CONTINUE_ON_ERROR') {
+        throw new SqlParseError(
+            'CONTINUE_ON_ERROR is not supported: each batch runs as a transaction and the run stops at the first error',
+            token.line,
+            token.column,
+        );
+    }
+    throw new SqlParseError(
+        `Unknown query hint '${token.value}'. Supported: BYPASS_CUSTOM_PLUGIN_EXECUTION, BATCH_SIZE_<n>`,
+        token.line,
+        token.column,
+    );
+}
+
+function withHints<T extends { hints?: DmlHints }>(stmt: T, hints: DmlHints | undefined): T {
+    if (hints) stmt.hints = hints;
+    return stmt;
+}
+
 // ── INSERT parser ──
 
 function parseInsert(tokens: Token[]): InsertStatement {
-    const { advance, check, expect, expectIdentifierOrKeyword, parseTableName, parseLiteral, peek } =
-        makeWalker(tokens);
+    const w = makeWalker(tokens);
+    const { advance, check, expect, expectIdentifierOrKeyword, parseTableName, parseLiteral, peek } = w;
 
     expect(TokenType.INSERT);
     expect(TokenType.INTO);
@@ -737,16 +821,17 @@ function parseInsert(tokens: Token[]): InsertStatement {
         }
     }
 
+    const hints = parseDmlHints(w);
     expect(TokenType.EOF);
 
-    return { type: 'insert', table, columns, values };
+    return withHints<InsertStatement>({ type: 'insert', table, columns, values }, hints);
 }
 
 // ── UPDATE parser ──
 
 function parseUpdate(tokens: Token[]): UpdateStatement {
-    const { advance, check, expect, expectIdentifierOrKeyword, parseTableName, parseLiteral, parseWhereOr, peek } =
-        makeWalker(tokens);
+    const w = makeWalker(tokens);
+    const { advance, check, expect, expectIdentifierOrKeyword, parseTableName, parseLiteral, parseWhereOr, peek } = w;
 
     expect(TokenType.UPDATE);
 
@@ -782,15 +867,17 @@ function parseUpdate(tokens: Token[]): UpdateStatement {
     advance(); // consume WHERE
     const where = parseWhereOr();
 
+    const hints = parseDmlHints(w);
     expect(TokenType.EOF);
 
-    return { type: 'update', table, set, where };
+    return withHints<UpdateStatement>({ type: 'update', table, set, where }, hints);
 }
 
 // ── DELETE parser ──
 
 function parseDelete(tokens: Token[]): DeleteStatement {
-    const { advance, check, expect, parseTableName, parseWhereOr, peek } = makeWalker(tokens);
+    const w = makeWalker(tokens);
+    const { advance, check, expect, parseTableName, parseWhereOr, peek } = w;
 
     expect(TokenType.DELETE);
     expect(TokenType.FROM);
@@ -809,9 +896,10 @@ function parseDelete(tokens: Token[]): DeleteStatement {
     advance(); // consume WHERE
     const where = parseWhereOr();
 
+    const hints = parseDmlHints(w);
     expect(TokenType.EOF);
 
-    return { type: 'delete', table, where };
+    return withHints<DeleteStatement>({ type: 'delete', table, where }, hints);
 }
 
 // ── Public API ──

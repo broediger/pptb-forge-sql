@@ -4,6 +4,8 @@ import {
     createOperations,
     deleteOperations,
     errorMessageOf,
+    hintHeaders,
+    withHeaders,
     summarizeTransaction,
     updateOperations,
     MAX_BATCH_OPERATIONS,
@@ -114,5 +116,33 @@ describe('errorMessageOf', () => {
     it('falls back to a string body, then the status', () => {
         expect(errorMessageOf({ status: 500, headers: {}, body: ' Server error ' })).toBe('Server error');
         expect(errorMessageOf({ status: 500, headers: {} })).toBe('HTTP 500');
+    });
+});
+
+describe('hint headers (#36)', () => {
+    it('maps BYPASS_CUSTOM_PLUGIN_EXECUTION to the Web API header', () => {
+        expect(hintHeaders({ bypassCustomPluginExecution: true })).toEqual({
+            'MSCRM.BypassCustomPluginExecution': 'true',
+        });
+    });
+
+    it('needs no headers without the bypass hint', () => {
+        expect(hintHeaders(undefined)).toBeUndefined();
+        expect(hintHeaders({ batchSize: 10 })).toBeUndefined();
+    });
+
+    it('puts the headers on every operation', () => {
+        const ops = withHeaders(deleteOperations('accounts', [GUID_A, GUID_B]), {
+            'MSCRM.BypassCustomPluginExecution': 'true',
+        });
+        expect(ops.map((op) => op.headers)).toEqual([
+            { 'MSCRM.BypassCustomPluginExecution': 'true' },
+            { 'MSCRM.BypassCustomPluginExecution': 'true' },
+        ]);
+    });
+
+    it('leaves operations unchanged without headers', () => {
+        const ops = deleteOperations('accounts', [GUID_A]);
+        expect(withHeaders(ops, undefined)).toBe(ops);
     });
 });

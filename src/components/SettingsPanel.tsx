@@ -73,6 +73,28 @@ export function SettingsPanel({ isOpen, onClose, isDark = false }: SettingsPanel
 
                     <div className={`border-t ${dividerClass}`} />
 
+                    {/* Bypass custom plugins */}
+                    <div>
+                        <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={settings.bypassCustomPlugins}
+                                onChange={(e) => updateSetting('bypassCustomPlugins', e.target.checked)}
+                                className="mt-0.5 h-4 w-4 rounded accent-indigo-500 cursor-pointer"
+                            />
+                            <span className={`text-xs ${labelClass}`}>
+                                Bypass custom plugins on Insert/Update/Delete
+                                <span className={`block mt-0.5 ${subtextClass}`}>
+                                    Same as OPTION (USE HINT('BYPASS_CUSTOM_PLUGIN_EXECUTION')) on every statement.
+                                    Needs the Bypass Custom Plugins privilege. Each statement still asks for
+                                    confirmation.
+                                </span>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div className={`border-t ${dividerClass}`} />
+
                     {/* Show FetchXML */}
                     <div>
                         <label className="flex items-start gap-3 cursor-pointer">
