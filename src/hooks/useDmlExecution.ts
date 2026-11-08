@@ -9,6 +9,17 @@ import {
     WhereExpr,
 } from '../sql/types';
 import { useSettingsStore } from '../stores/settingsStore';
+import { primaryKeyOf } from '../sql/primaryKey';
+import {
+    chunk,
+    createOperations,
+    deleteOperations,
+    summarizeTransaction,
+    updateOperations,
+    MAX_BATCH_OPERATIONS,
+    type BatchOperation,
+    type TransactionOutcome,
+} from '../sql/dmlBatch';
 
 // ── Public types ──
 
@@ -26,6 +37,15 @@ export interface DmlConfirmation {
     sampleRecords?: Record<string, unknown>[];
     typeToConfirm?: boolean;
     sql: string;
+    /** Records per transaction; 0 when the host can't run transactions. */
+    batchSize: number;
+    /** Whether the user may run all records as a single transaction. */
+    canRunAsOneTransaction: boolean;
+}
+
+export interface DmlConfirmOptions {
+    /** Run every record in one transaction instead of one per batch. */
+    singleTransaction?: boolean;
 }
 
 export interface DmlProgress {
@@ -43,12 +63,29 @@ interface PendingDml {
     sampleRecords?: Record<string, unknown>[];
 }
 
+// One INSERT/UPDATE/DELETE run, described per record index so it can be sent
+// as batch transactions or, on hosts without them, one call per record.
+interface WriteJob {
+    operation: 'INSERT' | 'UPDATE' | 'DELETE';
+    table: string;
+    count: number;
+    /** Batch operations for records [from, to). */
+    operations: (entitySet: string, from: number, to: number) => BatchOperation[];
+    /** Write one record with the per-record API; returns the created ID for INSERT. */
+    single: (index: number) => Promise<string | undefined>;
+    /** ID of an existing record, for error messages (UPDATE/DELETE). */
+    idAt?: (index: number) => string;
+}
+
+const PAST_TENSE = { INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted' } as const;
+const COMPLETE_TITLE = { INSERT: 'Insert Complete', UPDATE: 'Update Complete', DELETE: 'Delete Complete' } as const;
+
 // ── Helper: build a synthetic FetchXML that selects the primary key only ──
 
 function buildResolveFetchXml(table: string, where: WhereExpr): string {
     const syntheticSelect: SelectStatement = {
         type: 'select',
-        columns: [{ column: table + 'id' }],
+        columns: [{ column: primaryKeyOf(table) }],
         from: { table },
         joins: [],
         where,
@@ -62,6 +99,92 @@ function assertDataverseAPI(): void {
     if (typeof window === 'undefined' || !window.dataverseAPI) {
         throw new Error('Dataverse API not available. Load this tool in Power Platform ToolBox.');
     }
+}
+
+// PPTB 1.2.7 added $batch transactions; older hosts fall back to one call per record.
+function supportsTransactions(): boolean {
+    return typeof window.dataverseAPI?.executeTransaction === 'function';
+}
+
+// Batch URLs need the entity set name. Metadata knows it for every table;
+// PPTB's getEntitySetName only pluralizes the logical name.
+async function entitySetNameOf(table: string): Promise<string> {
+    try {
+        const metadata = await window.dataverseAPI.getEntityMetadata(table, true, ['EntitySetName']);
+        if (typeof metadata?.EntitySetName === 'string' && metadata.EntitySetName) return metadata.EntitySetName;
+    } catch {
+        // fall back below
+    }
+    return window.dataverseAPI.getEntitySetName(table);
+}
+
+function currentBatchSize(): number {
+    return useSettingsStore.getState().settings.batchSize;
+}
+
+function transactionInfo(count: number, batchSize: number): Pick<DmlConfirmation, 'batchSize' | 'canRunAsOneTransaction'> {
+    if (!supportsTransactions()) return { batchSize: 0, canRunAsOneTransaction: false };
+    return { batchSize, canRunAsOneTransaction: count > batchSize && count <= MAX_BATCH_OPERATIONS };
+}
+
+function describeRolledBackChunk(
+    job: WriteJob,
+    outcome: TransactionOutcome,
+    from: number,
+    to: number,
+    chunkIndex: number,
+    chunkCount: number,
+): string {
+    const which = chunkCount > 1 ? `Batch ${chunkIndex + 1} of ${chunkCount} (records ${from + 1}-${to})` : 'The transaction';
+    const record =
+        outcome.failedIndex !== undefined
+            ? ` at record ${from + outcome.failedIndex + 1}${job.idAt ? ` ${job.idAt(from + outcome.failedIndex)}` : ''}`
+            : '';
+    return `${which} failed${record} and was rolled back: ${outcome.error}`;
+}
+
+function errorText(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
+function notify(title: string, body: string, type: 'success' | 'warning' | 'error'): void {
+    try {
+        window.toolboxAPI.utils.showNotification({ title, body, type });
+    } catch {
+        // toolboxAPI may not be available
+    }
+}
+
+function updateJob(stmt: UpdateStatement, ids: string[]): WriteJob {
+    const values: Record<string, unknown> = {};
+    for (const clause of stmt.set) {
+        values[clause.column] = clause.value;
+    }
+    return {
+        operation: 'UPDATE',
+        table: stmt.table,
+        count: ids.length,
+        operations: (entitySet, from, to) => updateOperations(entitySet, ids.slice(from, to), values),
+        single: async (i) => {
+            await window.dataverseAPI.update(stmt.table, ids[i], values);
+            return undefined;
+        },
+        idAt: (i) => ids[i],
+    };
+}
+
+function deleteJob(stmt: DeleteStatement, ids: string[]): WriteJob {
+    return {
+        operation: 'DELETE',
+        table: stmt.table,
+        count: ids.length,
+        operations: (entitySet, from, to) => deleteOperations(entitySet, ids.slice(from, to)),
+        single: async (i) => {
+            await window.dataverseAPI.delete(stmt.table, ids[i]);
+            return undefined;
+        },
+        idAt: (i) => ids[i],
+    };
 }
 
 // ── Hook ──
@@ -102,9 +225,98 @@ export function useDmlExecution() {
         const fetchXml = buildResolveFetchXml(table, where);
         const result = await window.dataverseAPI.fetchXmlQuery(fetchXml);
         const rows: Record<string, unknown>[] = result.value ?? [];
-        const pkField = table + 'id';
+        const pkField = primaryKeyOf(table);
         const ids = [...new Set(rows.map((r) => r[pkField] as string).filter(Boolean))];
         return { ids, rows };
+    }
+
+    // ── Write records: one transaction per chunk, or per record on older hosts ──
+
+    async function runWrites(job: WriteJob, chunkSize: number, sql: string): Promise<void> {
+        const { operation, table, count } = job;
+        const showProgress = operation !== 'INSERT' || count > 10;
+        setIsExecuting(true);
+        if (showProgress) setProgress({ operation, total: count, completed: 0, cancelled: false });
+
+        const start = performance.now();
+        let completed = 0;
+        const createdIds: string[] = [];
+        let failure: string | null = null;
+
+        if (supportsTransactions()) {
+            const entitySet = await entitySetNameOf(table);
+            const chunks = chunk(Array.from({ length: count }, (_, i) => i), chunkSize);
+            for (let c = 0; c < chunks.length; c++) {
+                if (cancelledRef.current) break;
+                const first = chunks[c][0];
+                const end = first + chunks[c].length;
+                const ops = job.operations(entitySet, first, end);
+                let results: Awaited<ReturnType<typeof window.dataverseAPI.executeTransaction>>;
+                try {
+                    results = await window.dataverseAPI.executeTransaction(ops);
+                } catch (err) {
+                    // The request itself failed, so whether this batch committed is unknown.
+                    const which = chunks.length > 1 ? `Batch ${c + 1} of ${chunks.length} (records ${first + 1}-${end})` : 'The transaction';
+                    failure = `${which} failed: ${errorText(err)}`;
+                    break;
+                }
+                const outcome = summarizeTransaction(ops, results);
+                if (outcome.error) {
+                    failure = describeRolledBackChunk(job, outcome, first, end, c, chunks.length);
+                    break;
+                }
+                completed += outcome.succeeded;
+                createdIds.push(...outcome.createdIds);
+                if (showProgress) setProgress({ operation, total: count, completed, cancelled: false });
+            }
+        } else {
+            for (let i = 0; i < count; i++) {
+                if (cancelledRef.current) break;
+                try {
+                    const id = await job.single(i);
+                    if (id) createdIds.push(id);
+                } catch (err) {
+                    failure = `${errorText(err)} (record ${i + 1}${job.idAt ? ` ${job.idAt(i)}` : ''})`;
+                    break;
+                }
+                completed = i + 1;
+                if (showProgress) setProgress({ operation, total: count, completed, cancelled: false });
+            }
+        }
+
+        const executionTime = Math.round(performance.now() - start);
+        const wasCancelled = cancelledRef.current;
+        const verb = PAST_TENSE[operation];
+
+        setProgress(null);
+        setIsExecuting(false);
+        setConfirmationNeeded(null);
+
+        if (failure) {
+            const message = `${failure}. ${completed} of ${count} record${count !== 1 ? 's were' : ' was'} ${verb} before the error.`;
+            setDmlError(message);
+            notify('DML Error', message, 'error');
+            return;
+        }
+
+        setDmlResult({
+            operation,
+            affectedCount: completed,
+            ...(operation === 'INSERT' ? { createdIds } : {}),
+            executionTime,
+        });
+
+        if (wasCancelled) {
+            notify('Operation Cancelled', `${completed} of ${count} records processed before cancellation`, 'warning');
+        } else {
+            notify(
+                COMPLETE_TITLE[operation],
+                `${completed} record${completed !== 1 ? 's' : ''} ${verb} in ${executionTime}ms`,
+                'success',
+            );
+        }
+
+        addToHistory(sql, executionTime, completed);
     }
 
     // ── INSERT ──
@@ -112,80 +324,31 @@ export function useDmlExecution() {
     async function executeInsert(stmt: InsertStatement, sql: string): Promise<void> {
         assertDataverseAPI();
         const { table, columns, values } = stmt;
-        const total = values.length;
-        const createdIds: string[] = [];
-        const showProgress = total > 10;
-
-        if (showProgress) {
-            setProgress({ operation: 'INSERT', total, completed: 0, cancelled: false });
-        }
-
-        const start = performance.now();
-
-        for (let i = 0; i < values.length; i++) {
-            if (cancelledRef.current) {
-                setProgress((p) => (p ? { ...p, cancelled: true } : p));
-                break;
-            }
-
+        const records = values.map((row) => {
             const record: Record<string, unknown> = {};
             for (let c = 0; c < columns.length; c++) {
-                record[columns[c]] = values[i][c] ?? null;
+                record[columns[c]] = row[c] ?? null;
             }
+            return record;
+        });
 
-            const created = await window.dataverseAPI.create(table, record);
-            if (created?.id) createdIds.push(created.id);
-
-            if (showProgress) {
-                setProgress({ operation: 'INSERT', total, completed: i + 1, cancelled: false });
-            }
-        }
-
-        const end = performance.now();
-        const executionTime = Math.round(end - start);
-        const wasCancelled = cancelledRef.current;
-
-        setProgress(null);
-        setIsExecuting(false);
-
-        const affectedCount = createdIds.length;
-        setDmlResult({ operation: 'INSERT', affectedCount, createdIds, executionTime });
-
-        if (wasCancelled) {
-            try {
-                window.toolboxAPI.utils.showNotification({
-                    title: 'Operation Cancelled',
-                    body: `${affectedCount} of ${total} records processed before cancellation`,
-                    type: 'warning',
-                });
-            } catch {
-                // toolboxAPI may not be available
-            }
-        } else {
-            try {
-                window.toolboxAPI.utils.showNotification({
-                    title: 'Insert Complete',
-                    body: `${affectedCount} record${affectedCount !== 1 ? 's' : ''} created in ${executionTime}ms`,
-                    type: 'success',
-                });
-            } catch {
-                // toolboxAPI may not be available
-            }
-        }
-
-        addToHistory(sql, executionTime, affectedCount);
+        await runWrites(
+            {
+                operation: 'INSERT',
+                table,
+                count: records.length,
+                operations: (entitySet, from, to) => createOperations(entitySet, records.slice(from, to)),
+                single: async (i) => (await window.dataverseAPI.create(table, records[i]))?.id || undefined,
+            },
+            currentBatchSize(),
+            sql,
+        );
     }
 
     // ── UPDATE ──
 
     async function executeUpdate(stmt: UpdateStatement, sql: string): Promise<void> {
         assertDataverseAPI();
-
-        // Build set values object
-        const setValues: Record<string, unknown> = {};
-        for (const clause of stmt.set) {
-            setValues[clause.column] = clause.value;
-        }
 
         // Resolve matching records
         const { ids } = await resolveRecords(stmt.table, stmt.where);
@@ -198,7 +361,7 @@ export function useDmlExecution() {
         }
 
         // Require confirmation above a threshold derived from batchSize
-        const batchSize = useSettingsStore.getState().settings.batchSize;
+        const batchSize = currentBatchSize();
         const updateConfirmThreshold = Math.max(10, Math.floor(batchSize / 5));
         const updateTypeConfirmThreshold = batchSize * 2;
 
@@ -211,70 +374,14 @@ export function useDmlExecution() {
                 affectedCount: count,
                 typeToConfirm: count > updateTypeConfirmThreshold,
                 sql,
+                ...transactionInfo(count, batchSize),
             });
             setIsExecuting(false);
             return;
         }
 
-        // Proceed directly for <= 10 records
-        await runUpdateBatch(stmt.table, ids, setValues, sql);
-    }
-
-    async function runUpdateBatch(
-        table: string,
-        ids: string[],
-        setValues: Record<string, unknown>,
-        sql: string,
-    ): Promise<void> {
-        const total = ids.length;
-        setIsExecuting(true);
-        setProgress({ operation: 'UPDATE', total, completed: 0, cancelled: false });
-
-        const start = performance.now();
-        let completedCount = 0;
-
-        for (let i = 0; i < ids.length; i++) {
-            if (cancelledRef.current) {
-                setProgress((p) => (p ? { ...p, cancelled: true } : p));
-                break;
-            }
-            await window.dataverseAPI.update(table, ids[i], setValues);
-            completedCount = i + 1;
-            setProgress({ operation: 'UPDATE', total, completed: completedCount, cancelled: false });
-        }
-
-        const end = performance.now();
-        const executionTime = Math.round(end - start);
-        const wasCancelled = cancelledRef.current;
-
-        setProgress(null);
-        setIsExecuting(false);
-        setConfirmationNeeded(null);
-        setDmlResult({ operation: 'UPDATE', affectedCount: completedCount, executionTime });
-
-        if (wasCancelled) {
-            try {
-                window.toolboxAPI.utils.showNotification({
-                    title: 'Operation Cancelled',
-                    body: `${completedCount} of ${total} records processed before cancellation`,
-                    type: 'warning',
-                });
-            } catch {
-                // toolboxAPI may not be available
-            }
-        } else {
-            try {
-                window.toolboxAPI.utils.showNotification({
-                    title: 'Update Complete',
-                    body: `${completedCount} record${completedCount !== 1 ? 's' : ''} updated in ${executionTime}ms`,
-                    type: 'success',
-                });
-            } catch {
-                // toolboxAPI may not be available
-            }
-        }
-
-        addToHistory(sql, executionTime, completedCount);
+        // Proceed directly below the confirmation threshold
+        await runWrites(updateJob(stmt, ids), batchSize, sql);
     }
 
     // ── DELETE ──
@@ -296,7 +403,7 @@ export function useDmlExecution() {
         pendingSqlRef.current = sql;
 
         // DELETE always requires confirmation
-        const deleteBatchSize = useSettingsStore.getState().settings.batchSize;
+        const deleteBatchSize = currentBatchSize();
         setConfirmationNeeded({
             operation: 'DELETE',
             table: stmt.table,
@@ -304,60 +411,9 @@ export function useDmlExecution() {
             sampleRecords,
             typeToConfirm: count > deleteBatchSize,
             sql,
+            ...transactionInfo(count, deleteBatchSize),
         });
         setIsExecuting(false);
-    }
-
-    async function runDeleteBatch(table: string, ids: string[], sql: string): Promise<void> {
-        const total = ids.length;
-        setIsExecuting(true);
-        setProgress({ operation: 'DELETE', total, completed: 0, cancelled: false });
-
-        const start = performance.now();
-        let completedCount = 0;
-
-        for (let i = 0; i < ids.length; i++) {
-            if (cancelledRef.current) {
-                setProgress((p) => (p ? { ...p, cancelled: true } : p));
-                break;
-            }
-            await window.dataverseAPI.delete(table, ids[i]);
-            completedCount = i + 1;
-            setProgress({ operation: 'DELETE', total, completed: completedCount, cancelled: false });
-        }
-
-        const end = performance.now();
-        const executionTime = Math.round(end - start);
-        const wasCancelled = cancelledRef.current;
-
-        setProgress(null);
-        setIsExecuting(false);
-        setConfirmationNeeded(null);
-        setDmlResult({ operation: 'DELETE', affectedCount: completedCount, executionTime });
-
-        if (wasCancelled) {
-            try {
-                window.toolboxAPI.utils.showNotification({
-                    title: 'Operation Cancelled',
-                    body: `${completedCount} of ${total} records processed before cancellation`,
-                    type: 'warning',
-                });
-            } catch {
-                // toolboxAPI may not be available
-            }
-        } else {
-            try {
-                window.toolboxAPI.utils.showNotification({
-                    title: 'Delete Complete',
-                    body: `${completedCount} record${completedCount !== 1 ? 's' : ''} deleted in ${executionTime}ms`,
-                    type: 'success',
-                });
-            } catch {
-                // toolboxAPI may not be available
-            }
-        }
-
-        addToHistory(sql, executionTime, completedCount);
     }
 
     // ── History helper (best-effort) ──
@@ -417,24 +473,24 @@ export function useDmlExecution() {
 
     // ── Public: confirmExecution() ──
 
-    const confirmExecution = useCallback(async (): Promise<void> => {
+    const confirmExecution = useCallback(async (options: DmlConfirmOptions = {}): Promise<void> => {
         const pending = pendingRef.current;
         const sql = pendingSqlRef.current;
         if (!pending) return;
 
         cancelledRef.current = false;
+        // Close the dialog so the progress shows, and so a second click can't start the run again.
+        pendingRef.current = null;
+        setConfirmationNeeded(null);
+
+        const ids = pending.recordIds;
+        const chunkSize = options.singleTransaction ? Math.min(ids.length, MAX_BATCH_OPERATIONS) : currentBatchSize();
 
         try {
             if (pending.stmt.type === 'update') {
-                const updateStmt = pending.stmt as UpdateStatement;
-                const setValues: Record<string, unknown> = {};
-                for (const clause of updateStmt.set) {
-                    setValues[clause.column] = clause.value;
-                }
-                await runUpdateBatch(updateStmt.table, pending.recordIds, setValues, sql);
+                await runWrites(updateJob(pending.stmt as UpdateStatement, ids), chunkSize, sql);
             } else if (pending.stmt.type === 'delete') {
-                const deleteStmt = pending.stmt as DeleteStatement;
-                await runDeleteBatch(deleteStmt.table, pending.recordIds, sql);
+                await runWrites(deleteJob(pending.stmt as DeleteStatement, ids), chunkSize, sql);
             }
         } catch (err) {
             setIsExecuting(false);

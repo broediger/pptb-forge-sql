@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import type { DmlConfirmation } from '../hooks/useDmlExecution';
+import type { DmlConfirmation, DmlConfirmOptions } from '../hooks/useDmlExecution';
 
 interface DmlConfirmDialogProps {
     confirmation: DmlConfirmation;
-    onConfirm: () => void;
+    onConfirm: (options: DmlConfirmOptions) => void;
     onCancel: () => void;
     isDark?: boolean;
 }
 
 export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = false }: DmlConfirmDialogProps) {
     const [typeInput, setTypeInput] = useState('');
+    const [singleTransaction, setSingleTransaction] = useState(false);
 
-    const { operation, table, affectedCount, sampleRecords, typeToConfirm } = confirmation;
+    const { operation, table, affectedCount, sampleRecords, typeToConfirm, batchSize, canRunAsOneTransaction } =
+        confirmation;
     const isDelete = operation === 'DELETE';
 
     const confirmDisabled = typeToConfirm ? typeInput !== table : false;
@@ -131,6 +133,30 @@ export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = f
                     </div>
                 )}
 
+                {/* How the records are committed */}
+                {batchSize > 0 && (
+                    <div className={`text-xs mb-4 ${subtextClass}`}>
+                        {affectedCount <= batchSize || singleTransaction ? (
+                            <p>Runs as one transaction: if any record fails, no record is changed.</p>
+                        ) : (
+                            <p>
+                                Records are written in transactions of {batchSize}. If one fails, it is rolled back and
+                                the run stops; earlier transactions stay committed.
+                            </p>
+                        )}
+                        {canRunAsOneTransaction && (
+                            <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={singleTransaction}
+                                    onChange={(e) => setSingleTransaction(e.target.checked)}
+                                />
+                                <span>All or nothing: run all {affectedCount} records as one transaction</span>
+                            </label>
+                        )}
+                    </div>
+                )}
+
                 {/* Warning text */}
                 <p className={`text-xs mb-5 ${subtextClass}`}>
                     {isDelete
@@ -151,7 +177,7 @@ export function DmlConfirmDialog({ confirmation, onConfirm, onCancel, isDark = f
                         Cancel
                     </button>
                     <button
-                        onClick={onConfirm}
+                        onClick={() => onConfirm({ singleTransaction: canRunAsOneTransaction && singleTransaction })}
                         disabled={confirmDisabled}
                         className={`px-4 py-1.5 text-sm rounded font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${confirmBtnClass}`}
                     >

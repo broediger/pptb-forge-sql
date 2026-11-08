@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- INSERT, UPDATE and DELETE are sent as Web API `$batch` transactions instead of one request per record, which is much faster for larger changes. Each batch (the Batch Size setting, up to 1,000 records) is committed completely or not at all. If a batch fails, the run stops and the error names the batch and the failing record; earlier batches stay committed. For up to 1,000 records the confirmation dialog offers "All or nothing" to run everything as one transaction. Older PPTB versions without batch support keep using one request per record. (#35)
+- The UPDATE/DELETE confirmation dialog closes when you confirm, so the progress is visible while the records are written.
+
+### Fixed
+- After a successful INSERT, UPDATE or DELETE the tool crashed with `Cannot read properties of null (reading 'executionTime')` while adding the statement to the history.
+- UPDATE and DELETE on activity tables (`task`, `email`, ...) looked up the matching records by `<table>id`, which those tables don't have, so they found no records or failed. They now use `activityid`.
+
 ## [1.2.0] - 2026-11-07
 
 ### Added
