@@ -14,8 +14,10 @@ import {
     chunk,
     createOperations,
     deleteOperations,
+    hintHeaders,
     summarizeTransaction,
     updateOperations,
+    withHeaders,
     MAX_BATCH_OPERATIONS,
     type BatchOperation,
     type TransactionOutcome,
@@ -31,7 +33,7 @@ export interface DmlResult {
 }
 
 export interface DmlConfirmation {
-    operation: 'UPDATE' | 'DELETE';
+    operation: 'INSERT' | 'UPDATE' | 'DELETE';
     table: string;
     affectedCount: number;
     sampleRecords?: Record<string, unknown>[];
@@ -41,7 +43,12 @@ export interface DmlConfirmation {
     batchSize: number;
     /** Whether the user may run all records as a single transaction. */
     canRunAsOneTransaction: boolean;
+    /** Why custom plugins are bypassed, if they are. */
+    bypassCustomPlugins: BypassSource | null;
 }
+
+/** The statement's query hint, or the "Bypass custom plugins" setting. */
+export type BypassSource = 'hint' | 'setting';
 
 export interface DmlConfirmOptions {
     /** Run every record in one transaction instead of one per batch. */
@@ -57,8 +64,11 @@ export interface DmlProgress {
 
 // ── Internal pending state stored in a ref so confirmExecution can access it ──
 
+type DmlStatement = InsertStatement | UpdateStatement | DeleteStatement;
+
 interface PendingDml {
-    stmt: UpdateStatement | DeleteStatement;
+    stmt: DmlStatement;
+    /** Records to change (UPDATE/DELETE); empty for INSERT. */
     recordIds: string[];
     sampleRecords?: Record<string, unknown>[];
 }
@@ -75,6 +85,8 @@ interface WriteJob {
     single: (index: number) => Promise<string | undefined>;
     /** ID of an existing record, for error messages (UPDATE/DELETE). */
     idAt?: (index: number) => string;
+    /** Headers for every operation, from the statement's query hints. */
+    headers?: Record<string, string>;
 }
 
 const PAST_TENSE = { INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted' } as const;
@@ -122,9 +134,43 @@ function currentBatchSize(): number {
     return useSettingsStore.getState().settings.batchSize;
 }
 
-function transactionInfo(count: number, batchSize: number): Pick<DmlConfirmation, 'batchSize' | 'canRunAsOneTransaction'> {
-    if (!supportsTransactions()) return { batchSize: 0, canRunAsOneTransaction: false };
-    return { batchSize, canRunAsOneTransaction: count > batchSize && count <= MAX_BATCH_OPERATIONS };
+/** Records per batch: the statement's BATCH_SIZE hint, else the setting. */
+function batchSizeFor(stmt: DmlStatement): number {
+    return stmt.hints?.batchSize ?? currentBatchSize();
+}
+
+/**
+ * Apply the "Bypass custom plugins" setting to a statement without the hint.
+ * Returns the statement with the effective hints and why plugins are bypassed.
+ */
+function withBypassSetting<T extends DmlStatement>(stmt: T): { stmt: T; bypass: BypassSource | null } {
+    if (stmt.hints?.bypassCustomPluginExecution) return { stmt, bypass: 'hint' };
+    if (!useSettingsStore.getState().settings.bypassCustomPlugins) return { stmt, bypass: null };
+    return { stmt: { ...stmt, hints: { ...stmt.hints, bypassCustomPluginExecution: true } }, bypass: 'setting' };
+}
+
+// The bypass header only works through the batch path (PPTB 1.2.7+). Older
+// hosts would drop it silently and run the plugins, so refuse instead.
+function assertBypassSupported(bypass: BypassSource | null): void {
+    if (!bypass || supportsTransactions()) return;
+    const what =
+        bypass === 'hint' ? 'BYPASS_CUSTOM_PLUGIN_EXECUTION' : "The 'Bypass custom plugins' setting";
+    throw new Error(`${what} needs a newer Power Platform ToolBox (1.2.7 or later)`);
+}
+
+function transactionInfo(
+    stmt: DmlStatement,
+    count: number,
+    bypass: BypassSource | null,
+): Pick<DmlConfirmation, 'batchSize' | 'canRunAsOneTransaction' | 'bypassCustomPlugins'> {
+    const bypassCustomPlugins = bypass;
+    if (!supportsTransactions()) return { batchSize: 0, canRunAsOneTransaction: false, bypassCustomPlugins };
+    const batchSize = batchSizeFor(stmt);
+    return {
+        batchSize,
+        canRunAsOneTransaction: count > batchSize && count <= MAX_BATCH_OPERATIONS,
+        bypassCustomPlugins,
+    };
 }
 
 function describeRolledBackChunk(
@@ -155,6 +201,25 @@ function notify(title: string, body: string, type: 'success' | 'warning' | 'erro
     }
 }
 
+function insertJob(stmt: InsertStatement): WriteJob {
+    const { table, columns, values } = stmt;
+    const records = values.map((row) => {
+        const record: Record<string, unknown> = {};
+        for (let c = 0; c < columns.length; c++) {
+            record[columns[c]] = row[c] ?? null;
+        }
+        return record;
+    });
+    return {
+        operation: 'INSERT',
+        table,
+        count: records.length,
+        operations: (entitySet, from, to) => createOperations(entitySet, records.slice(from, to)),
+        single: async (i) => (await window.dataverseAPI.create(table, records[i]))?.id || undefined,
+        headers: hintHeaders(stmt.hints),
+    };
+}
+
 function updateJob(stmt: UpdateStatement, ids: string[]): WriteJob {
     const values: Record<string, unknown> = {};
     for (const clause of stmt.set) {
@@ -170,6 +235,7 @@ function updateJob(stmt: UpdateStatement, ids: string[]): WriteJob {
             return undefined;
         },
         idAt: (i) => ids[i],
+        headers: hintHeaders(stmt.hints),
     };
 }
 
@@ -184,6 +250,7 @@ function deleteJob(stmt: DeleteStatement, ids: string[]): WriteJob {
             return undefined;
         },
         idAt: (i) => ids[i],
+        headers: hintHeaders(stmt.hints),
     };
 }
 
@@ -250,7 +317,7 @@ export function useDmlExecution() {
                 if (cancelledRef.current) break;
                 const first = chunks[c][0];
                 const end = first + chunks[c].length;
-                const ops = job.operations(entitySet, first, end);
+                const ops = withHeaders(job.operations(entitySet, first, end), job.headers);
                 let results: Awaited<ReturnType<typeof window.dataverseAPI.executeTransaction>>;
                 try {
                     results = await window.dataverseAPI.executeTransaction(ops);
@@ -311,7 +378,7 @@ export function useDmlExecution() {
         } else {
             notify(
                 COMPLETE_TITLE[operation],
-                `${completed} record${completed !== 1 ? 's' : ''} ${verb} in ${executionTime}ms`,
+                `${completed} record${completed !== 1 ? 's' : ''} ${verb} in ${executionTime}ms${job.headers ? ' (custom plugins bypassed)' : ''}`,
                 'success',
             );
         }
@@ -321,33 +388,31 @@ export function useDmlExecution() {
 
     // ── INSERT ──
 
-    async function executeInsert(stmt: InsertStatement, sql: string): Promise<void> {
+    async function executeInsert(stmt: InsertStatement, sql: string, bypass: BypassSource | null): Promise<void> {
         assertDataverseAPI();
-        const { table, columns, values } = stmt;
-        const records = values.map((row) => {
-            const record: Record<string, unknown> = {};
-            for (let c = 0; c < columns.length; c++) {
-                record[columns[c]] = row[c] ?? null;
-            }
-            return record;
-        });
 
-        await runWrites(
-            {
+        // INSERT runs without confirmation, unless it bypasses custom plugins.
+        if (bypass) {
+            const count = stmt.values.length;
+            pendingRef.current = { stmt, recordIds: [] };
+            pendingSqlRef.current = sql;
+            setConfirmationNeeded({
                 operation: 'INSERT',
-                table,
-                count: records.length,
-                operations: (entitySet, from, to) => createOperations(entitySet, records.slice(from, to)),
-                single: async (i) => (await window.dataverseAPI.create(table, records[i]))?.id || undefined,
-            },
-            currentBatchSize(),
-            sql,
-        );
+                table: stmt.table,
+                affectedCount: count,
+                sql,
+                ...transactionInfo(stmt, count, bypass),
+            });
+            setIsExecuting(false);
+            return;
+        }
+
+        await runWrites(insertJob(stmt), batchSizeFor(stmt), sql);
     }
 
     // ── UPDATE ──
 
-    async function executeUpdate(stmt: UpdateStatement, sql: string): Promise<void> {
+    async function executeUpdate(stmt: UpdateStatement, sql: string, bypass: BypassSource | null): Promise<void> {
         assertDataverseAPI();
 
         // Resolve matching records
@@ -365,7 +430,8 @@ export function useDmlExecution() {
         const updateConfirmThreshold = Math.max(10, Math.floor(batchSize / 5));
         const updateTypeConfirmThreshold = batchSize * 2;
 
-        if (count > updateConfirmThreshold) {
+        // Bypassing plugins always asks, whatever the count: skipped plugin logic can leave data inconsistent.
+        if (count > updateConfirmThreshold || bypass) {
             pendingRef.current = { stmt, recordIds: ids };
             pendingSqlRef.current = sql;
             setConfirmationNeeded({
@@ -374,19 +440,19 @@ export function useDmlExecution() {
                 affectedCount: count,
                 typeToConfirm: count > updateTypeConfirmThreshold,
                 sql,
-                ...transactionInfo(count, batchSize),
+                ...transactionInfo(stmt, count, bypass),
             });
             setIsExecuting(false);
             return;
         }
 
         // Proceed directly below the confirmation threshold
-        await runWrites(updateJob(stmt, ids), batchSize, sql);
+        await runWrites(updateJob(stmt, ids), batchSizeFor(stmt), sql);
     }
 
     // ── DELETE ──
 
-    async function executeDelete(stmt: DeleteStatement, sql: string): Promise<void> {
+    async function executeDelete(stmt: DeleteStatement, sql: string, bypass: BypassSource | null): Promise<void> {
         assertDataverseAPI();
 
         const { ids, rows } = await resolveRecords(stmt.table, stmt.where);
@@ -411,7 +477,7 @@ export function useDmlExecution() {
             sampleRecords,
             typeToConfirm: count > deleteBatchSize,
             sql,
-            ...transactionInfo(count, deleteBatchSize),
+            ...transactionInfo(stmt, count, bypass),
         });
         setIsExecuting(false);
     }
@@ -430,18 +496,21 @@ export function useDmlExecution() {
 
         try {
             const tokens = tokenize(sql);
-            const stmt = parseStatement(tokens);
+            const parsed = parseStatement(tokens);
 
-            if (stmt.type === 'select') {
+            if (parsed.type === 'select') {
                 throw new Error('Use the query editor to run SELECT statements');
             }
 
+            const { stmt, bypass } = withBypassSetting(parsed);
+            assertBypassSupported(bypass);
+
             if (stmt.type === 'insert') {
-                await executeInsert(stmt as InsertStatement, sql);
+                await executeInsert(stmt, sql, bypass);
             } else if (stmt.type === 'update') {
-                await executeUpdate(stmt as UpdateStatement, sql);
+                await executeUpdate(stmt, sql, bypass);
             } else if (stmt.type === 'delete') {
-                await executeDelete(stmt as DeleteStatement, sql);
+                await executeDelete(stmt, sql, bypass);
             }
         } catch (err) {
             setIsExecuting(false);
@@ -484,10 +553,15 @@ export function useDmlExecution() {
         setConfirmationNeeded(null);
 
         const ids = pending.recordIds;
-        const chunkSize = options.singleTransaction ? Math.min(ids.length, MAX_BATCH_OPERATIONS) : currentBatchSize();
+        const count = pending.stmt.type === 'insert' ? pending.stmt.values.length : ids.length;
+        const chunkSize = options.singleTransaction
+            ? Math.min(count, MAX_BATCH_OPERATIONS)
+            : batchSizeFor(pending.stmt);
 
         try {
-            if (pending.stmt.type === 'update') {
+            if (pending.stmt.type === 'insert') {
+                await runWrites(insertJob(pending.stmt), chunkSize, sql);
+            } else if (pending.stmt.type === 'update') {
                 await runWrites(updateJob(pending.stmt as UpdateStatement, ids), chunkSize, sql);
             } else if (pending.stmt.type === 'delete') {
                 await runWrites(deleteJob(pending.stmt as DeleteStatement, ids), chunkSize, sql);

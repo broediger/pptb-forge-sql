@@ -8,6 +8,7 @@ export interface ForgeSettings {
     showFetchXml: boolean; // auto-show FetchXML tab after execution
     csvDelimiter: CsvDelimiter; // last delimiter chosen in the CSV export menu
     editorHeight: number; // SQL editor height in px, set by dragging the editor/results split
+    bypassCustomPlugins: boolean; // INSERT/UPDATE/DELETE bypass custom plugins, like OPTION (USE HINT('BYPASS_CUSTOM_PLUGIN_EXECUTION'))
 }
 
 const DEFAULT_SETTINGS: ForgeSettings = {
@@ -16,6 +17,7 @@ const DEFAULT_SETTINGS: ForgeSettings = {
     showFetchXml: false,
     csvDelimiter: ',',
     editorHeight: DEFAULT_EDITOR_HEIGHT,
+    bypassCustomPlugins: false,
 };
 
 interface SettingsStore {

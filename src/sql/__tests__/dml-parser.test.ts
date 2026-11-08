@@ -468,3 +468,63 @@ describe('schema-qualified DML targets (#25)', () => {
         expect([ins.table, upd.table, del.table]).toEqual(['account', 'account', 'account']);
     });
 });
+
+describe('OPTION (USE HINT) on DML (#36)', () => {
+    const parse = (sql: string) => parseStatement(tokenize(sql)) as InsertStatement | UpdateStatement | DeleteStatement;
+
+    it('reads BYPASS_CUSTOM_PLUGIN_EXECUTION on DELETE', () => {
+        const stmt = parse("DELETE FROM account WHERE name = 'x' OPTION (USE HINT('BYPASS_CUSTOM_PLUGIN_EXECUTION'))");
+        expect(stmt.hints).toEqual({ bypassCustomPluginExecution: true });
+        expect(stmt.type).toBe('delete');
+    });
+
+    it('reads several hints, case-insensitive, in one or more USE HINT lists', () => {
+        const upd = parse(
+            "UPDATE account SET name = 'a' WHERE statecode = 0 option (use hint ('batch_size_10', 'Bypass_Custom_Plugin_Execution'))",
+        );
+        expect(upd.hints).toEqual({ batchSize: 10, bypassCustomPluginExecution: true });
+
+        const ins = parse(
+            "INSERT INTO account (name) VALUES ('a'), ('b') OPTION (USE HINT('BATCH_SIZE_5'), USE HINT('BYPASS_CUSTOM_PLUGIN_EXECUTION'))",
+        );
+        expect(ins.hints).toEqual({ batchSize: 5, bypassCustomPluginExecution: true });
+    });
+
+    it('leaves hints undefined without OPTION', () => {
+        expect(parse("DELETE FROM account WHERE name = 'x'").hints).toBeUndefined();
+    });
+
+    it('still accepts a column named option', () => {
+        const stmt = parse('DELETE FROM account WHERE option = 1') as DeleteStatement;
+        expect(stmt.hints).toBeUndefined();
+        expect((stmt.where as ComparisonExpr).left).toEqual({ column: 'option' });
+    });
+
+    it('rejects an unknown hint and names the supported ones', () => {
+        expect(() => parse("DELETE FROM account WHERE name = 'x' OPTION (USE HINT('NO_DIRECT_DML'))")).toThrow(
+            /Unknown query hint 'NO_DIRECT_DML'.*BYPASS_CUSTOM_PLUGIN_EXECUTION/,
+        );
+    });
+
+    it('rejects CONTINUE_ON_ERROR with the reason', () => {
+        expect(() => parse("DELETE FROM account WHERE name = 'x' OPTION (USE HINT('CONTINUE_ON_ERROR'))")).toThrow(
+            /CONTINUE_ON_ERROR is not supported/,
+        );
+    });
+
+    it('rejects a batch size outside 1-1000', () => {
+        expect(() => parse("DELETE FROM account WHERE name = 'x' OPTION (USE HINT('BATCH_SIZE_0'))")).toThrow(
+            /between 1 and 1000/,
+        );
+        expect(() => parse("DELETE FROM account WHERE name = 'x' OPTION (USE HINT('BATCH_SIZE_5000'))")).toThrow(
+            /between 1 and 1000/,
+        );
+    });
+
+    it('rejects other OPTION content and anything after OPTION', () => {
+        expect(() => parse("DELETE FROM account WHERE name = 'x' OPTION (MAXDOP 1)")).toThrow(/Expected USE HINT/);
+        expect(() => parse("DELETE FROM account WHERE name = 'x' OPTION (USE HINT('BATCH_SIZE_5')) extra")).toThrow(
+            SqlParseError,
+        );
+    });
+});

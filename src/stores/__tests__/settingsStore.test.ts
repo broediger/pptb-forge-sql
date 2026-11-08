@@ -64,6 +64,7 @@ describe('settingsStore persistence', () => {
             showFetchXml: true,
             csvDelimiter: ';',
             editorHeight: DEFAULT_EDITOR_HEIGHT,
+            bypassCustomPlugins: false,
         };
         expect(store.getState().settings).toEqual(expected);
         expect(settings.data.forgeSettings).toEqual(expected);
@@ -104,6 +105,7 @@ describe('settingsStore persistence', () => {
             showFetchXml: false,
             csvDelimiter: ';',
             editorHeight: DEFAULT_EDITOR_HEIGHT,
+            bypassCustomPlugins: false,
         });
     });
 
