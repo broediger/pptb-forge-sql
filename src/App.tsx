@@ -246,14 +246,17 @@ export default function App() {
     }, [addQueryTab]);
 
     // Add DML results to history when they resolve
+    // Read dml.dmlResult itself: the tab's copy is synced by the effect above
+    // and isn't in this render's tabResults yet.
     useEffect(() => {
-        if (!dml.dmlResult) return;
+        const result = dml.dmlResult;
+        if (!result) return;
         addEntry({
             sql: pendingDmlSqlRef.current,
             timestamp: Date.now(),
-            executionTime: activeTabResults.dmlResult!.executionTime,
-            rowCount: activeTabResults.dmlResult!.affectedCount,
-            statementType: activeTabResults.dmlResult!.operation,
+            executionTime: result.executionTime,
+            rowCount: result.affectedCount,
+            statementType: result.operation,
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dml.dmlResult]);

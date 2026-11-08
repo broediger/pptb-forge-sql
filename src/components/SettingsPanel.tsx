@@ -66,6 +66,9 @@ export function SettingsPanel({ isOpen, onClose, isDark = false }: SettingsPanel
                             />
                             <span className={`text-xs ${subtextClass} shrink-0`}>records</span>
                         </div>
+                        <p className={`text-xs mt-1 ${subtextClass}`}>
+                            Each batch is sent as one transaction: it is committed completely or not at all.
+                        </p>
                     </div>
 
                     <div className={`border-t ${dividerClass}`} />
