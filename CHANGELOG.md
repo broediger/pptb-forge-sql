@@ -8,6 +8,7 @@
 
 ### Changed
 - INSERT, UPDATE and DELETE are sent as Web API `$batch` transactions instead of one request per record, which is much faster for larger changes. Each batch (the Batch Size setting, up to 1,000 records) is committed completely or not at all. If a batch fails, the run stops and the error names the batch and the failing record; earlier batches stay committed. For up to 1,000 records the confirmation dialog offers "All or nothing" to run everything as one transaction. Older PPTB versions without batch support keep using one request per record. (#35)
+- While INSERT, UPDATE or DELETE writes records, closing the Forge SQL tab or quitting Power Platform ToolBox shows a warning first, because closing would stop the statement halfway. (#37)
 - The UPDATE/DELETE confirmation dialog closes when you confirm, so the progress is visible while the records are written.
 
 ### Fixed

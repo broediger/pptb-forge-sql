@@ -189,6 +189,16 @@ function describeRolledBackChunk(
     return `${which} failed${record} and was rolled back: ${outcome.error}`;
 }
 
+/** Ask PPTB to warn before closing (or stop warning). Best effort: older hosts lack the API. */
+async function setPreventClose(on: boolean): Promise<void> {
+    try {
+        const api = window.toolboxAPI;
+        await (on ? api?.preventClose?.() : api?.releasePreventClose?.());
+    } catch {
+        // not available; the run continues without the warning
+    }
+}
+
 function errorText(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
@@ -299,7 +309,18 @@ export function useDmlExecution() {
 
     // ── Write records: one transaction per chunk, or per record on older hosts ──
 
+    // While records are written, PPTB warns before the tab is closed or the
+    // app quits (#37): closing mid-run would leave the statement half done.
     async function runWrites(job: WriteJob, chunkSize: number, sql: string): Promise<void> {
+        await setPreventClose(true);
+        try {
+            await writeRecords(job, chunkSize, sql);
+        } finally {
+            await setPreventClose(false);
+        }
+    }
+
+    async function writeRecords(job: WriteJob, chunkSize: number, sql: string): Promise<void> {
         const { operation, table, count } = job;
         const showProgress = operation !== 'INSERT' || count > 10;
         setIsExecuting(true);
