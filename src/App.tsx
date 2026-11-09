@@ -15,6 +15,7 @@ import { useHistoryStore } from './stores/historyStore';
 import { useSchemaStore } from './stores/schemaStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { exportToCsv, exportToJson, type CsvDelimiter } from './utils/export';
+import { sqlFromLaunchContext } from './utils/toolInvocation';
 import { DEFAULT_EDITOR_HEIGHT, KEYBOARD_STEP, dragEditorHeight, storedEditorHeight } from './utils/editorSplit';
 import { CsvExportMenu } from './components/CsvExportMenu';
 import { useConnection, useToolboxEvents } from './hooks/useToolboxAPI';
@@ -76,6 +77,8 @@ export default function App() {
         { id: '1', label: 'Query 1', sql: 'SELECT TOP 10 * FROM account' },
     ]);
     const [activeQueryTabId, setActiveQueryTabId] = useState<string>('1');
+    const activeQueryTabIdRef = useRef(activeQueryTabId);
+    activeQueryTabIdRef.current = activeQueryTabId;
     const [nextTabNum, setNextTabNum] = useState<number>(2);
     const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState<string>('');
@@ -231,6 +234,28 @@ export default function App() {
     // opens) so preferences like the CSV delimiter apply right away.
     useEffect(() => {
         useSettingsStore.getState().loadFromToolbox();
+    }, []);
+
+    // Opened by another tool with a query (#38): it replaces the sample query
+    // in the first tab. Not run automatically; the user checks it and runs it.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            let sql: string | null = null;
+            try {
+                sql = sqlFromLaunchContext(await window.toolboxAPI?.invocation?.getLaunchContext?.());
+            } catch {
+                // invocation API not available
+            }
+            if (cancelled || !sql) return;
+            setQueryTabs((prev) => prev.map((t) => (t.id === '1' ? { ...t, sql } : t)));
+            // If the editor is already showing the first tab, update it too;
+            // otherwise it picks the SQL up from the tab when it mounts.
+            if (editorRef.current && activeQueryTabIdRef.current === '1') editorRef.current.setValue(sql);
+        })();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     // Ctrl+T / Cmd+T to add a new query tab

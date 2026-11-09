@@ -135,6 +135,18 @@ DELETE FROM contact WHERE statecode = 1
 
 ---
 
+## Working with other tools
+
+**Send FetchXML to another tool.** When an installed tool accepts FetchXML (it declares the `fetchxml` capability, e.g. FetchXML Studio, Data Migrator or Bulk Data Studio), the FetchXML tab shows **Open in &lt;tool&gt;**, or **Send to** with a list when there are several. The tool opens with the generated FetchXML and the same connection. Forge SQL sends it as `fetchXml` and `fetchxml` (tools use either key) plus `entityLogicalName`.
+
+**Open Forge SQL from another tool.** Launch `pptb-forge-sql` with a `sql` prefill; the query replaces the sample query in the first tab. It isn't run automatically. Forge SQL doesn't return data to the caller, so launch it with `noReturn: true`:
+
+```ts
+await toolboxAPI.invocation.launchTool('pptb-forge-sql', { sql: 'SELECT TOP 10 name FROM account' }, { noReturn: true });
+```
+
+---
+
 ## Use from AI agents (MCP)
 
 Forge SQL can be called by MCP clients such as Claude Code, Claude Desktop or VS Code through the Power Platform ToolBox MCP server. Agents can run **SELECT only**: INSERT, UPDATE and DELETE are rejected, because they need the preview and confirmation of the tool window. Queries run headless (no window opens) against a saved ToolBox connection that you pick.
