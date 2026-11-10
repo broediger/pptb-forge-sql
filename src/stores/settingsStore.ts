@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { CsvDelimiter } from '../utils/export';
 import { DEFAULT_EDITOR_HEIGHT } from '../utils/editorSplit';
+import { DEFAULT_MAX_DML_RECORDS } from '../sql/dmlRecords';
 
 export interface ForgeSettings {
     batchSize: number; // DML batch size (default 50)
@@ -9,6 +10,7 @@ export interface ForgeSettings {
     csvDelimiter: CsvDelimiter; // last delimiter chosen in the CSV export menu
     editorHeight: number; // SQL editor height in px, set by dragging the editor/results split
     bypassCustomPlugins: boolean; // INSERT/UPDATE/DELETE bypass custom plugins, like OPTION (USE HINT('BYPASS_CUSTOM_PLUGIN_EXECUTION'))
+    maxDmlRecords: number; // most records one UPDATE/DELETE may change; larger statements are rejected before any change
 }
 
 const DEFAULT_SETTINGS: ForgeSettings = {
@@ -18,6 +20,7 @@ const DEFAULT_SETTINGS: ForgeSettings = {
     csvDelimiter: ',',
     editorHeight: DEFAULT_EDITOR_HEIGHT,
     bypassCustomPlugins: false,
+    maxDmlRecords: DEFAULT_MAX_DML_RECORDS,
 };
 
 interface SettingsStore {

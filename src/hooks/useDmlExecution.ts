@@ -1,15 +1,9 @@
 import { useState, useCallback, useRef } from 'react';
-import { tokenize, parseStatement, generateFetchXml } from '../sql';
-import {
-    InsertStatement,
-    UpdateStatement,
-    DeleteStatement,
-    SqlParseError,
-    SelectStatement,
-    WhereExpr,
-} from '../sql/types';
+import { tokenize, parseStatement } from '../sql';
+import { InsertStatement, UpdateStatement, DeleteStatement, SqlParseError, WhereExpr } from '../sql/types';
 import { useSettingsStore } from '../stores/settingsStore';
-import { primaryKeyOf } from '../sql/primaryKey';
+import { clampMaxDmlRecords, resolveDmlRecords } from '../sql/dmlRecords';
+import type { FetchXmlQueryFn } from '../sql/selectExecution';
 import {
     chunk,
     createOperations,
@@ -60,6 +54,8 @@ export interface DmlProgress {
     total: number;
     completed: number;
     cancelled: boolean;
+    /** Still looking up the records to change; `completed` counts the ones found. */
+    resolving?: boolean;
 }
 
 // ── Internal pending state stored in a ref so confirmExecution can access it ──
@@ -91,19 +87,6 @@ interface WriteJob {
 
 const PAST_TENSE = { INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted' } as const;
 const COMPLETE_TITLE = { INSERT: 'Insert Complete', UPDATE: 'Update Complete', DELETE: 'Delete Complete' } as const;
-
-// ── Helper: build a synthetic FetchXML that selects the primary key only ──
-
-function buildResolveFetchXml(table: string, where: WhereExpr): string {
-    const syntheticSelect: SelectStatement = {
-        type: 'select',
-        columns: [{ column: primaryKeyOf(table) }],
-        from: { table },
-        joins: [],
-        where,
-    };
-    return generateFetchXml(syntheticSelect);
-}
 
 // ── Helper: check dataverseAPI is available ──
 
@@ -275,6 +258,9 @@ export function useDmlExecution() {
 
     // Cancellation flag
     const cancelledRef = useRef<boolean>(false);
+    // Bumped by every run and every cancel, so a cancelled record lookup that
+    // finishes after a new statement started is ignored.
+    const runRef = useRef(0);
 
     // Pending DML stored between "show confirmation" and "confirmExecution"
     const pendingRef = useRef<PendingDml | null>(null);
@@ -290,21 +276,51 @@ export function useDmlExecution() {
         setProgress(null);
         cancelledRef.current = false;
         pendingRef.current = null;
+        runRef.current += 1;
     }
 
-    // ── Resolve matching record IDs via FetchXML ──
+    // ── Resolve matching record IDs via FetchXML, page by page (#40) ──
 
+    // Returns null when the user cancelled; cancelExecution has reset the state then.
     async function resolveRecords(
+        operation: 'UPDATE' | 'DELETE',
         table: string,
         where: WhereExpr,
-    ): Promise<{ ids: string[]; rows: Record<string, unknown>[] }> {
+    ): Promise<{ ids: string[]; rows: Record<string, unknown>[] } | null> {
         assertDataverseAPI();
-        const fetchXml = buildResolveFetchXml(table, where);
-        const result = await window.dataverseAPI.fetchXmlQuery(fetchXml);
-        const rows: Record<string, unknown>[] = result.value ?? [];
-        const pkField = primaryKeyOf(table);
-        const ids = [...new Set(rows.map((r) => r[pkField] as string).filter(Boolean))];
-        return { ids, rows };
+        const run = runRef.current;
+        const isCancelled = () => cancelledRef.current || runRef.current !== run;
+        const query: FetchXmlQueryFn = (fetchXml) => window.dataverseAPI.fetchXmlQuery(fetchXml);
+        const showFound = (found: number) => {
+            if (!isCancelled()) {
+                setProgress({ operation, total: 0, completed: found, cancelled: false, resolving: true });
+            }
+        };
+        showFound(0);
+        try {
+            const result = await resolveDmlRecords(query, table, where, {
+                maxRecords: clampMaxDmlRecords(useSettingsStore.getState().settings.maxDmlRecords),
+                onProgress: showFound,
+                isCancelled,
+            });
+            if (result.cancelled || isCancelled()) {
+                if (runRef.current === run + 1 && cancelledRef.current) {
+                    notify(
+                        'Operation Cancelled',
+                        'Cancelled while looking up the records. Nothing was changed.',
+                        'warning',
+                    );
+                }
+                return null;
+            }
+            return { ids: result.ids, rows: result.sampleRows };
+        } catch (err) {
+            // An error from a lookup that was already cancelled isn't shown.
+            if (isCancelled()) return null;
+            throw err;
+        } finally {
+            if (!isCancelled()) setProgress(null);
+        }
     }
 
     // ── Write records: one transaction per chunk, or per record on older hosts ──
@@ -437,7 +453,9 @@ export function useDmlExecution() {
         assertDataverseAPI();
 
         // Resolve matching records
-        const { ids } = await resolveRecords(stmt.table, stmt.where);
+        const records = await resolveRecords('UPDATE', stmt.table, stmt.where);
+        if (!records) return;
+        const { ids } = records;
         const count = ids.length;
 
         if (count === 0) {
@@ -476,7 +494,9 @@ export function useDmlExecution() {
     async function executeDelete(stmt: DeleteStatement, sql: string, bypass: BypassSource | null): Promise<void> {
         assertDataverseAPI();
 
-        const { ids, rows } = await resolveRecords(stmt.table, stmt.where);
+        const records = await resolveRecords('DELETE', stmt.table, stmt.where);
+        if (!records) return;
+        const { ids, rows } = records;
         const count = ids.length;
 
         if (count === 0) {
@@ -618,6 +638,7 @@ export function useDmlExecution() {
 
     const cancelExecution = useCallback((): void => {
         cancelledRef.current = true;
+        runRef.current += 1;
         setConfirmationNeeded(null);
         pendingRef.current = null;
         setIsExecuting(false);

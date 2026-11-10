@@ -15,6 +15,7 @@
 ### Fixed
 - After a successful INSERT, UPDATE or DELETE the tool crashed with `Cannot read properties of null (reading 'executionTime')` while adding the statement to the history.
 - UPDATE and DELETE on activity tables (`task`, `email`, ...) looked up the matching records by `<table>id`, which those tables don't have, so they found no records or failed. They now use `activityid`.
+- UPDATE and DELETE changed at most 5,000 records: the lookup of the matching records read only the first page from Dataverse, and the confirmation showed 5,000 as the count. The lookup now reads every page, shows how many records it has found, and can be cancelled. A statement that matches more records than the new setting **Max records per statement** (default 100,000, up to 1,000,000) is rejected before anything is changed. (#40)
 
 ## [1.2.0] - 2026-11-07
 
