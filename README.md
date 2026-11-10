@@ -85,6 +85,8 @@ UPDATE and DELETE without a WHERE clause are rejected at parse time. For operati
 
 INSERT, UPDATE and DELETE are sent as Web API `$batch` requests of **Batch Size** records (Settings, up to 1,000). Each batch is one transaction: it is committed completely or not at all. If a batch fails, the run stops and the error names the batch and the failing record; earlier batches stay committed. For up to 1,000 records the confirmation dialog offers **All or nothing**, which runs every record in one transaction. Older Power Platform ToolBox versions without batch support write one record per request.
 
+UPDATE and DELETE first look up every matching record, page by page, and show how many they have found; you can cancel the lookup. One statement can change at most **Max records per statement** records (Settings, default 100,000, up to 1,000,000). A statement that matches more is rejected before anything is changed: narrow the WHERE clause and run it in parts, or raise the setting.
+
 ### Query hints
 
 INSERT, UPDATE and DELETE accept SQL 4 CDS-style hints in a trailing `OPTION` clause:

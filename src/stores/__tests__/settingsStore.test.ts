@@ -65,6 +65,7 @@ describe('settingsStore persistence', () => {
             csvDelimiter: ';',
             editorHeight: DEFAULT_EDITOR_HEIGHT,
             bypassCustomPlugins: false,
+            maxDmlRecords: 100_000,
         };
         expect(store.getState().settings).toEqual(expected);
         expect(settings.data.forgeSettings).toEqual(expected);
@@ -106,6 +107,7 @@ describe('settingsStore persistence', () => {
             csvDelimiter: ';',
             editorHeight: DEFAULT_EDITOR_HEIGHT,
             bypassCustomPlugins: false,
+            maxDmlRecords: 100_000,
         });
     });
 

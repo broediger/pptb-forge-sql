@@ -1,4 +1,5 @@
 import { useSettingsStore } from '../stores/settingsStore';
+import { clampMaxDmlRecords, MAX_DML_RECORDS_LIMIT } from '../sql/dmlRecords';
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -68,6 +69,37 @@ export function SettingsPanel({ isOpen, onClose, isDark = false }: SettingsPanel
                         </div>
                         <p className={`text-xs mt-1 ${subtextClass}`}>
                             Each batch is sent as one transaction: it is committed completely or not at all.
+                        </p>
+                    </div>
+
+                    <div className={`border-t ${dividerClass}`} />
+
+                    {/* Max records per statement */}
+                    <div>
+                        <label className={`block text-xs font-medium mb-1.5 ${labelClass}`}>
+                            Max records per statement
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <span className={`text-xs ${subtextClass} shrink-0`}>Update/Delete at most</span>
+                            <input
+                                type="number"
+                                min={1}
+                                max={MAX_DML_RECORDS_LIMIT}
+                                step={1000}
+                                value={settings.maxDmlRecords}
+                                onChange={(e) =>
+                                    updateSetting(
+                                        'maxDmlRecords',
+                                        clampMaxDmlRecords(parseInt(e.target.value, 10) || 1),
+                                    )
+                                }
+                                className={`w-28 px-2 py-1 text-sm rounded border outline-none transition-colors ${inputClass}`}
+                            />
+                            <span className={`text-xs ${subtextClass} shrink-0`}>records</span>
+                        </div>
+                        <p className={`text-xs mt-1 ${subtextClass}`}>
+                            A statement that matches more records is rejected before anything is changed. Up to{' '}
+                            {MAX_DML_RECORDS_LIMIT.toLocaleString()}.
                         </p>
                     </div>
 

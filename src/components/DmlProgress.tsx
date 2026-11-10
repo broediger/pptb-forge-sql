@@ -7,7 +7,7 @@ interface DmlProgressProps {
 }
 
 export function DmlProgress({ progress, onCancel, isDark = false }: DmlProgressProps) {
-    const { operation, total, completed, cancelled } = progress;
+    const { operation, total, completed, cancelled, resolving } = progress;
     const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
     const operationLabel = operation.charAt(0) + operation.slice(1).toLowerCase();
@@ -44,18 +44,20 @@ export function DmlProgress({ progress, onCancel, isDark = false }: DmlProgressP
                             />
                         </svg>
                     )}
-                    <span className="text-sm font-medium">{cancelled ? 'Cancelled' : `${operationLabel}ing…`}</span>
+                    <span className="text-sm font-medium">
+                        {cancelled ? 'Cancelled' : resolving ? 'Finding records…' : `${operationLabel}ing…`}
+                    </span>
                 </div>
                 <span className={`text-xs font-mono ${subtextClass}`}>
-                    {completed}/{total} ({pct}%)
+                    {resolving ? `${completed.toLocaleString()} found` : `${completed}/${total} (${pct}%)`}
                 </span>
             </div>
 
             {/* Progress bar */}
             <div className={`w-full rounded-full h-1.5 overflow-hidden ${trackClass}`}>
                 <div
-                    className={`h-full rounded-full transition-all duration-150 ${barColor}`}
-                    style={{ width: `${pct}%` }}
+                    className={`h-full rounded-full transition-all duration-150 ${barColor} ${resolving ? 'opacity-40 animate-pulse' : ''}`}
+                    style={{ width: resolving ? '100%' : `${pct}%` }}
                 />
             </div>
 
