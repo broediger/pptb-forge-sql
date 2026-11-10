@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.0] - 2026-11-10
 
 ### Added
 - SQL 4 CDS-style query hints on INSERT, UPDATE and DELETE: `OPTION (USE HINT('BYPASS_CUSTOM_PLUGIN_EXECUTION'))` skips custom synchronous plugins (sends `MSCRM.BypassCustomPluginExecution` on every operation; Power Platform ToolBox asks once to allow the header), and `BATCH_SIZE_<n>` sets the batch size for one statement. Unknown hints and `CONTINUE_ON_ERROR` are rejected with an error. A statement that bypasses plugins always asks for confirmation, INSERT included and whatever the number of records; the dialog and the completion message show that plugins are bypassed. (#36)
