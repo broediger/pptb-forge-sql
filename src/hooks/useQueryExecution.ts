@@ -3,6 +3,7 @@ import { tokenize, parseStatement, SqlParseError } from '../sql';
 import type { JsonValueColumn } from '../sql/jsonValue';
 import { extractColumns } from '../sql/columnResolution';
 import { executeSelect, fetchNextPage, type FetchXmlQueryFn } from '../sql/selectExecution';
+import { totalRecordCountVia } from '../sql/clientAggregate';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -15,6 +16,8 @@ interface QueryExecutionState {
     pagingCookie: string | null;
     /** More rows match but can't be paged (client-side filter); shown under the grid. */
     limitNote: string | null;
+    /** Rows read so far while an aggregate over the 50,000-record limit is computed client-side. */
+    scanProgress: number | null;
 }
 
 export interface ExecuteResult {
@@ -26,6 +29,8 @@ export interface ExecuteResult {
 interface QueryExecutionReturn extends QueryExecutionState {
     execute: (sql: string) => Promise<ExecuteResult>;
     loadNextPage: () => Promise<void>;
+    /** Stop a client-side aggregate scan; its partial values are shown. */
+    cancelScan: () => void;
 }
 
 const queryDataverse: FetchXmlQueryFn = async (fetchXml) => {
@@ -34,6 +39,13 @@ const queryDataverse: FetchXmlQueryFn = async (fetchXml) => {
     }
     return window.dataverseAPI.fetchXmlQuery(fetchXml);
 };
+
+const totalRecordCount = totalRecordCountVia((request) => {
+    if (typeof window === 'undefined' || !window.dataverseAPI) {
+        return Promise.reject(new Error('Dataverse API not available.'));
+    }
+    return window.dataverseAPI.execute(request);
+});
 
 export function useQueryExecution(): QueryExecutionReturn {
     const [state, setState] = useState<QueryExecutionState>({
@@ -46,12 +58,14 @@ export function useQueryExecution(): QueryExecutionReturn {
         rowCount: null,
         pagingCookie: null,
         limitNote: null,
+        scanProgress: null,
     });
 
     const pageRef = useRef<number>(1);
     const generationRef = useRef<number>(0);
     // JSON_VALUE columns of the current query, applied to every fetched page.
     const jsonColumnsRef = useRef<JsonValueColumn[]>([]);
+    const cancelScanRef = useRef<boolean>(false);
 
     const execute = useCallback(async (sql: string): Promise<ExecuteResult> => {
         setState((prev) => ({
@@ -65,10 +79,13 @@ export function useQueryExecution(): QueryExecutionReturn {
             rowCount: null,
             pagingCookie: null,
             limitNote: null,
+            scanProgress: null,
         }));
 
         pageRef.current = 1;
         generationRef.current += 1;
+        const generation = generationRef.current;
+        cancelScanRef.current = false;
 
         const start = performance.now();
         let fetchXml: string | null = null;
@@ -86,7 +103,14 @@ export function useQueryExecution(): QueryExecutionReturn {
                 onFetchXml: (xml) => {
                     fetchXml = xml;
                 },
+                onScanProgress: (scanProgress) => setState((prev) => ({ ...prev, scanProgress })),
+                isCancelled: () => cancelScanRef.current || generationRef.current !== generation,
+                totalRecordCount,
             });
+            // A newer run started meanwhile (and cancelled this scan): its state wins.
+            if (generationRef.current !== generation) {
+                return { rowCount: null, executionTime: null, error: null };
+            }
             jsonColumnsRef.current = result.jsonColumns;
 
             const executionTime = Math.round(performance.now() - start);
@@ -101,6 +125,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 rowCount: result.rows.length,
                 pagingCookie: result.pagingCookie,
                 limitNote: result.limitNote ?? null,
+                scanProgress: null,
                 isExecuting: false,
             }));
 
@@ -134,6 +159,7 @@ export function useQueryExecution(): QueryExecutionReturn {
                 error: errorMessage,
                 executionTime,
                 isExecuting: false,
+                scanProgress: null,
                 fetchXml: fetchXml ?? prev.fetchXml,
             }));
 
@@ -234,9 +260,14 @@ export function useQueryExecution(): QueryExecutionReturn {
         }
     }, []);
 
+    const cancelScan = useCallback((): void => {
+        cancelScanRef.current = true;
+    }, []);
+
     return {
         ...state,
         execute,
         loadNextPage,
+        cancelScan,
     };
 }
