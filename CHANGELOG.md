@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0] - 2026-11-11
+
+### Added
+- Aggregates over Dataverse's 50,000-record limit now work. Before, they failed with `0x8004e023: The maximum record limit of 50000 is exceeded`, unless the query was a single `COUNT` without DISTINCT or joins. Forge SQL now does it like SQL 4 CDS: it reads the matching rows without aggregation and computes `COUNT(*)`, `COUNT(col)`, `COUNT(DISTINCT …)`, `SUM`, `AVG`, `MIN` and `MAX` itself, along with `GROUP BY`, `HAVING`, `ORDER BY` and `TOP`. This works with joins too, including joins on non-lookup columns. The results are exact. While the rows are read, the results area shows how many have been read, and **Cancel** shows the values so far, marked as partial. The FetchXML tab shows the rejected query and the scan used instead. `MIN`/`MAX` and `ORDER BY` on GUID columns aren't supported in this mode. Through MCP, the read stops after 2,000,000 rows.
+
+### Fixed
+- Paged reads no longer stop early or count rows twice when Dataverse leaves out the "more records" flag or the paging cookie. Before, this could happen with joins (a live scan of about 204,000 rows stopped at 5,000 rows, or repeated rows). Reads over joins now page by the primary keys of every table, so a record that appears in several joined rows is neither skipped nor repeated. This applies to the aggregate fallback, `IN (SELECT …)` subqueries and client-side filters.
+- A query that gets a full page of 5,000 rows without a paging cookie now says that more rows may exist, instead of looking complete.
+- Results of a query replaced by a newer one (progress, errors) no longer show up on the newer query.
+- The prefill description for other tools said INSERT, UPDATE and DELETE are rejected. That only applies to MCP calls: when another tool opens Forge SQL with a statement, it goes into the editor to review and run. The description now says so.
+- **Send to** in the FetchXML tab failed silently on a Power Platform ToolBox version that can't open other tools. It now shows a notification.
+
 ## [1.3.0] - 2026-11-10
 
 ### Added
