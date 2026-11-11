@@ -1,6 +1,6 @@
 import { generateFetchXml } from './generator';
-import type { SelectStatement, WhereExpr, ColumnRef, AggregateExpr, InSubqueryExpr, LiteralValue } from './types';
-import { isAggregateExpr, isJsonValueExpr } from './types';
+import type { SelectStatement, WhereExpr, ColumnRef, InSubqueryExpr, LiteralValue, OrderByItem } from './types';
+import { isAggregateExpr, isColumnRef, isJsonValueExpr } from './types';
 import { getJsonValueColumns, applyJsonValues, type JsonValueColumn } from './jsonValue';
 import {
     cleanRows,
@@ -25,6 +25,17 @@ import { planHaving, applyHaving, withPage, HAVING_PAGE_SIZE, MAX_HAVING_GROUPS 
 import { describeCondition } from './condition';
 import { primaryKeyOf, withActivityKey } from './primaryKey';
 import {
+    AGGREGATE_LIMIT_CODE,
+    SCAN_PAGE_SIZE,
+    ClientAggregator,
+    isAggregateLimitError,
+    keyTuple,
+    keyValues,
+    planClientAggregate,
+    scanAfter,
+    type ClientAggregatePlan,
+} from './clientAggregate';
+import {
     planVirtualFilter,
     assertVirtualFilterSupported,
     matchesVirtualFilter,
@@ -41,7 +52,7 @@ import {
 
 /**
  * Runs a SELECT against Dataverse: subquery expansion, HAVING, the virtual
- * `xxxname` retries and the 50,000-record aggregate fallbacks. Dataverse is
+ * `xxxname` retries and the 50,000-record aggregate fallback (`clientAggregate.ts`). Dataverse is
  * reached only through the injected `query` function, so the same code runs
  * in the tool UI (`window.dataverseAPI`), in the headless MCP entry, and in
  * tests.
@@ -67,6 +78,16 @@ export interface SelectExecutionOptions {
      * `DEFAULT_CLIENT_FILTER_ROWS`.
      */
     rowLimit?: number;
+    /**
+     * Checked before each page of a client-side aggregate scan (the 50,000-record
+     * fallback); when it returns true the scan stops and the partial values are
+     * returned with a `limitNote`.
+     */
+    isCancelled?: () => boolean;
+    /** Rows read so far by a client-side aggregate scan. */
+    onScanProgress?: (scannedRows: number) => void;
+    /** Max rows a client-side aggregate scan may read before it fails; unlimited when unset. */
+    maxScanRows?: number;
 }
 
 /** Rows returned by a client-side filtered query without TOP: one Dataverse page's worth. */
@@ -177,50 +198,6 @@ function xmlEscape(value: string): string {
 }
 
 /**
- * Detect a SELECT shape that can fall back to a paged client-side count when
- * Dataverse rejects the aggregate query (error 0x8004e023: 50,000 row limit).
- * Conservative: a single `COUNT(*)` or `COUNT(<column>)` with no DISTINCT /
- * GROUP BY / HAVING / JOIN.
- */
-function isSimpleCount(stmt: SelectStatement): boolean {
-    if (stmt.columns.length !== 1) return false;
-    const col = stmt.columns[0];
-    if (!isAggregateExpr(col)) return false;
-    return col.function === 'COUNT' && !col.distinct && !stmt.groupBy && !stmt.having && stmt.joins.length === 0;
-}
-
-/**
- * Detect `SELECT <col>, COUNT(*) FROM <t> [WHERE …] GROUP BY <col> [ORDER BY …]`.
- * Same purpose as `isSimpleCount` but for grouped counts. The fallback pages
- * through the source rows and aggregates client-side. Conservative: exactly
- * one grouping column, one `COUNT(*)`, no JOIN, no HAVING.
- */
-function isSimpleGroupByCount(stmt: SelectStatement): { groupColumn: ColumnRef; aggregate: AggregateExpr } | null {
-    if (stmt.columns.length !== 2) return null;
-    if (!stmt.groupBy || stmt.groupBy.length !== 1) return null;
-    if (stmt.having) return null;
-    if (stmt.joins.length !== 0) return null;
-    const groupBy = stmt.groupBy[0];
-
-    let groupColumn: ColumnRef | null = null;
-    let aggregate: AggregateExpr | null = null;
-    for (const c of stmt.columns) {
-        if (isAggregateExpr(c)) {
-            if (c.function !== 'COUNT' || c.column.column !== '*' || c.distinct) return null;
-            aggregate = c;
-        } else if (isJsonValueExpr(c)) {
-            return null;
-        } else if (c.column === groupBy.column && (c.table ?? null) === (groupBy.table ?? null)) {
-            groupColumn = c;
-        } else {
-            return null;
-        }
-    }
-    if (!groupColumn || !aggregate) return null;
-    return { groupColumn, aggregate };
-}
-
-/**
  * PPTB returns the Dataverse paging cookie wrapped in its own envelope:
  *   `<cookie pagenumber="N" pagingcookie="<double-url-encoded inner cookie>" istracking="False" />`
  * Dataverse, however, expects the raw inner cookie (`<cookie page="1">...</cookie>`)
@@ -317,128 +294,168 @@ async function firstScanPage<T>(
     }
 }
 
-/**
- * Fallback for `COUNT(*)` when Dataverse rejects the aggregate query with
- * the 50,000-source-record limit (0x8004e023). Re-issues the same SELECT as
- * a non-aggregate paged scan of the primary key and counts rows on the
- * client. Mirrors SQL4CDS's behaviour when the TDS endpoint is unavailable.
- */
-async function runPagedCountFallback(
-    query: FetchXmlQueryFn,
-    stmt: SelectStatement,
-    onProgress?: (rowCount: number) => void,
-): Promise<{ total: number; pageCount: number; scanFetchXml: string }> {
-    const agg = stmt.columns[0] as AggregateExpr;
-    const idCol = primaryKeyOf(stmt.from.table);
-    // For COUNT(<col>), SQL semantics ignore NULLs — preserve that in
-    // the paged scan by adding `<col> IS NOT NULL` to the WHERE. For
-    // COUNT(*), no extra filter is needed.
-    let scanWhere = stmt.where;
-    if (agg.column.column !== '*') {
-        const notNull = { kind: 'is_null', column: agg.column, negated: true } as const;
-        scanWhere = scanWhere ? { kind: 'and', left: scanWhere, right: notNull } : notNull;
-    }
-    // Paging cookies in Dataverse encode position by the query's <order>
-    // elements. Without an explicit order, the second page errors with
-    // 0x80041129 ("Paging Cookie And Query Do Not Match"). Pin the scan
-    // to the primary key for stable cursoring.
-    const stmtForScan: SelectStatement = {
-        ...stmt,
-        columns: [{ column: idCol }],
-        distinct: false,
-        where: scanWhere,
-        orderBy: [{ column: { column: idCol }, direction: 'ASC' }],
-    };
-    // The caller already settled which column-name form Dataverse
-    // accepts (literal vs. virtual rewrite), so don't re-apply
-    // rewriteVirtualColumns here — doing so would re-strip names like
-    // `orb_regardingobjectlogicalname` that are real attributes.
-    let scanFetchXml = '';
-
-    let total = 0;
-    let page = 1;
-    let pagingCookie: string | null = null;
-    let pageCount = 0;
-
-    while (true) {
-        let result: FetchXmlQueryResult;
-        if (page === 1) {
-            ({ result, fetchXml: scanFetchXml } = await firstScanPage(stmtForScan, query));
-        } else {
-            result = await query(injectPagingIntoFetchXml(scanFetchXml, pagingCookie!, page));
-        }
-        const pageRows = rawRows(result);
-        total += pageRows.length;
-        pageCount += 1;
-        onProgress?.(total);
-        pagingCookie = pagingCookieOf(result);
-        if (!pagingCookie || pageRows.length === 0) break;
-        page += 1;
-    }
-
-    return { total, pageCount, scanFetchXml };
+interface ClientAggregateRun {
+    aggregator: ClientAggregator;
+    pageCount: number;
+    /** FetchXML of the first scan page, as sent. */
+    scanFetchXml: string;
+    /** Keyset paging (joins) instead of the paging cookie. */
+    keyset: boolean;
+    cancelled: boolean;
+    /** Rows dropped because their key tuple had already been read. */
+    duplicates: number;
 }
 
 /**
- * Fallback for `SELECT <col>, COUNT(*) FROM <t> [WHERE …] GROUP BY <col>`
- * when Dataverse rejects the aggregate query with 0x8004e023. Pages
- * through the source rows requesting `<col>` plus the primary key (ordered
- * by the primary key for stable cursoring) and aggregates client-side.
+ * Fallback for an aggregate query Dataverse rejects with the 50,000-record
+ * limit (0x8004e023), as SQL 4 CDS does it: read the same rows without
+ * aggregation, page by page, and aggregate client-side.
+ *
+ * The scan never relies on `@Microsoft.Dynamics.CRM.morerecords` (Dataverse
+ * leaves it out on some queries that do have more pages) nor on page numbers
+ * alone (they repeat rows across pages and stop at 50,000 records). Without
+ * joins it pages with the paging cookie, ordered by the primary key. With
+ * joins one record can appear in several rows while a cookie only tracks the
+ * root record, so joined scans page by keyset: ordered by every table's
+ * primary key, each page asks for the rows after the last key of the previous
+ * one. A full page that comes back without a cookie continues by keyset too.
  */
-async function runPagedGroupByCountFallback(
+async function runClientAggregate(
     query: FetchXmlQueryFn,
-    stmt: SelectStatement,
-    groupColumn: ColumnRef,
-    onProgress?: (rowCount: number) => void,
-): Promise<{ counts: Map<string, number>; scannedRows: number; pageCount: number; scanFetchXml: string }> {
-    const idCol = primaryKeyOf(stmt.from.table);
-    // Strip aggregation, keep WHERE, add primary key order for paging.
-    const stmtForScan: SelectStatement = {
-        ...stmt,
-        columns: [{ column: groupColumn.column }, { column: idCol }],
-        distinct: false,
-        groupBy: undefined,
-        having: undefined,
-        orderBy: [{ column: { column: idCol }, direction: 'ASC' }],
-    };
-    // Caller passes the effective stmt (already resolved to literal or
-    // virtual-rewritten names by `executeSelect`), so don't re-rewrite here.
+    plan: ClientAggregatePlan,
+    options: SelectExecutionOptions,
+): Promise<ClientAggregateRun> {
+    const aggregator = new ClientAggregator(plan);
+    const table = plan.scanStmt.from.table;
+    let keyset = plan.scanStmt.joins.length > 0;
+    let keyPlan = plan;
     let scanFetchXml = '';
-
-    const counts = new Map<string, number>();
-    // For lookup columns Dataverse returns the GUID under `_<col>_value`
-    // and exposes the friendly name via the `_formatted` annotation.
-    // `cleanRows` exposes those as `<col>` (GUID) and `<col>name`. We
-    // index by whichever key the user actually wrote — if both exist
-    // we still bucket by the user's chosen key for correctness.
-    let scannedRows = 0;
-    let page = 1;
     let pagingCookie: string | null = null;
-    let pageCount = 0;
+    let lastKeys: unknown[] = [];
+    let lastTuple: string | null = null;
+    let duplicates = 0;
+    const done = (pageCount: number, cancelled = false): ClientAggregateRun => ({
+        aggregator,
+        pageCount,
+        scanFetchXml,
+        keyset,
+        cancelled,
+        duplicates,
+    });
+    const pageStmt = () => ({ ...keyPlan.scanStmt, top: SCAN_PAGE_SIZE });
 
-    while (true) {
-        let result: FetchXmlQueryResult;
-        if (page === 1) {
-            ({ result, fetchXml: scanFetchXml } = await firstScanPage(stmtForScan, query));
-        } else {
-            result = await query(injectPagingIntoFetchXml(scanFetchXml, pagingCookie!, page));
+    for (let page = 1; ; page++) {
+        if (page > 1 && options.isCancelled?.()) return done(page - 1, true);
+        let result!: FetchXmlQueryResult;
+        try {
+            if (page === 1) {
+                // A guessed `<table>id` key that doesn't exist is an activity table's `activityid`.
+                for (let attempt = 0; ; attempt++) {
+                    scanFetchXml = fetchXmlOf(keyset ? pageStmt() : keyPlan.scanStmt);
+                    options.onFetchXml?.(scanFetchXml);
+                    try {
+                        result = await query(scanFetchXml);
+                        break;
+                    } catch (err) {
+                        const swapped = attempt < keyPlan.keyColumns.length ? swapActivityKey(keyPlan, err) : null;
+                        if (!swapped) throw err;
+                        keyPlan = swapped;
+                    }
+                }
+            } else if (keyset) {
+                result = await query(fetchXmlOf(scanAfter(pageStmt(), keyPlan.keyColumns, lastKeys)));
+            } else {
+                result = await query(injectPagingIntoFetchXml(scanFetchXml, pagingCookie!, page));
+            }
+        } catch (err) {
+            if (page === 1) throw err;
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(
+                `The client-side aggregate stopped on page ${page} after ${aggregator.scannedRows.toLocaleString('en-US')} rows: ${message}`,
+            );
         }
-        const rawPageRows = rawRows(result);
-        const pageRows = applyReverseEntityAliases(cleanRows(rawPageRows), stmt.from.table);
-        for (const row of pageRows) {
-            const raw = row[groupColumn.column];
-            const key = raw == null ? '' : String(raw);
-            counts.set(key, (counts.get(key) ?? 0) + 1);
+        const raw = rawRows(result);
+        const rows = applyReverseEntityAliases(cleanRows(raw), table);
+        // Every row is unique by its full key tuple. Drop a row seen twice in a
+        // page or repeated across the page boundary instead of counting it again.
+        const seen = new Set<string>(lastTuple ? [lastTuple] : []);
+        const fresh = rows.filter((row) => {
+            const tuple = keyTuple(keyValues(row, keyPlan));
+            if (seen.has(tuple)) return false;
+            seen.add(tuple);
+            return true;
+        });
+        duplicates += rows.length - fresh.length;
+        aggregator.add(fresh);
+        options.onProgress?.(aggregator.scannedRows);
+        options.onScanProgress?.(aggregator.scannedRows);
+        if (options.maxScanRows !== undefined && aggregator.scannedRows > options.maxScanRows) {
+            throw new Error(
+                `The aggregate exceeds Dataverse's 50,000-record limit, and computing it client-side would read more than ` +
+                    `${options.maxScanRows.toLocaleString('en-US')} rows. Add filters to narrow it.`,
+            );
         }
-        scannedRows += rawPageRows.length;
-        pageCount += 1;
-        onProgress?.(scannedRows);
-        pagingCookie = pagingCookieOf(result);
-        if (!pagingCookie || rawPageRows.length === 0) break;
-        page += 1;
+        if (raw.length === 0) return done(page);
+        const pageLast = keyValues(rows[rows.length - 1], keyPlan);
+        const pageLastTuple = keyTuple(pageLast);
+        if (pageLastTuple === lastTuple) {
+            // The page ended where the previous one did: paging isn't advancing.
+            throw new Error(
+                `The client-side aggregate stopped on page ${page}: Dataverse returned the same last row again, so paging ` +
+                    `doesn't advance (${aggregator.scannedRows.toLocaleString('en-US')} rows read).`,
+            );
+        }
+        lastTuple = pageLastTuple;
+        pagingCookie = keyset ? null : pagingCookieOf(result);
+        if (pagingCookie) continue;
+        // No cookie: a short page is the last one; a full page continues by keyset.
+        if (raw.length < SCAN_PAGE_SIZE) return done(page);
+        keyset = true;
+        lastKeys = pageLast;
     }
+}
 
-    return { counts, scannedRows, pageCount, scanFetchXml };
+/** `plan` with the guessed `<table>id` key that `err` rejected replaced by `activityid`. */
+function swapActivityKey(plan: ClientAggregatePlan, err: unknown): ClientAggregatePlan | null {
+    const tableOf = (key: ColumnRef) =>
+        key.table ? plan.scanStmt.joins.find((j) => (j.alias ?? j.table) === key.table)?.table : plan.scanStmt.from.table;
+    const index = plan.keyColumns.findIndex((key) => {
+        const t = tableOf(key);
+        return !!t && key.column === `${t.toLowerCase()}id` && isMissingAttributeError(err, key.column);
+    });
+    if (index === -1) return null;
+    const old = plan.keyColumns[index];
+    const swapped: ColumnRef = { ...old, column: 'activityid' };
+    const same = (c: ColumnRef) => c.column === old.column && (c.table ?? '') === (old.table ?? '');
+    const keyColumns = plan.keyColumns.map((k, i) => (i === index ? swapped : k));
+    return {
+        ...plan,
+        keyColumns,
+        scanStmt: {
+            ...plan.scanStmt,
+            columns: plan.scanStmt.columns.map((c) => (isColumnRef(c) && same(c) ? swapped : c)) as ColumnRef[],
+            orderBy: keyColumns.map((column) => ({ column, direction: 'ASC' })),
+        },
+    };
+}
+
+function describeScan(run: ClientAggregateRun): string {
+    const how = run.keyset
+        ? 'paged by primary keys (keyset; the joins can repeat a record across rows)'
+        : 'paged with the paging cookie';
+    const stop = run.cancelled ? ' Cancelled: the values are partial.' : '';
+    const dupes = run.duplicates > 0 ? ` ${run.duplicates.toLocaleString('en-US')} repeated row(s) dropped.` : '';
+    return (
+        `     Computed client-side from a scan without aggregation, ${how}:\n` +
+        `     ${run.pageCount} page(s), ${run.aggregator.scannedRows.toLocaleString('en-US')} row(s) read, ` +
+        `${run.aggregator.groupCount.toLocaleString('en-US')} group(s).${dupes}${stop}`
+    );
+}
+
+function cancelledNote(run: ClientAggregateRun): string | undefined {
+    return run.cancelled
+        ? `Cancelled after ${run.aggregator.scannedRows.toLocaleString('en-US')} rows: these values cover only the rows read so far.`
+        : undefined;
 }
 
 interface FetchAllRowsOptions {
@@ -462,6 +479,23 @@ interface ReadAllResult {
     pageCount: number;
     /** Rows read from Dataverse, before `matches`. */
     scannedRows: number;
+}
+
+function andWhere(left: WhereExpr | undefined, right: WhereExpr): WhereExpr {
+    return left ? { kind: 'and', left, right } : right;
+}
+
+/**
+ * Whether ORDER BY can be redone client-side on the scanned rows: each column
+ * must come back in the rows (selected, or SELECT *) and must not hold GUIDs,
+ * which only SQL Server can order (checked on the rows before sorting).
+ */
+function sortableClientSide(stmt: SelectStatement, order: OrderByItem[]): boolean {
+    if (order.length === 0) return true;
+    const requested = getRequestedColumns(stmt);
+    if (requested === null) return true;
+    const names = new Set(requested.map((r) => r.toLowerCase()));
+    return order.every((o) => !o.column.table && names.has(o.column.column.toLowerCase()));
 }
 
 /**
@@ -495,6 +529,13 @@ async function fetchAllRows(
     let scannedRows = 0;
     let page = 1;
     let pagingCookie: string | null = null;
+    // Set once a full page came back without a paging cookie: the scan then
+    // continues by keyset on the primary key (`pk > last`). With an ORDER BY
+    // of its own, the scan restarts ordered by the key alone and sorts
+    // client-side at the end (`clientSort`).
+    let keysetBase: SelectStatement | null = null;
+    let keysetLast: unknown = undefined;
+    let clientSort: OrderByItem[] | null = null;
     while (true) {
         let result: Awaited<ReturnType<typeof runFetchXml>>;
         if (page === 1) {
@@ -503,6 +544,22 @@ async function fetchAllRows(
                 (xml) => runFetchXml(query, xml, jsonColumns),
                 options.onFetchXml,
             ));
+        } else if (keysetBase) {
+            const key = keysetBase.orderBy![0].column.column;
+            const pageStmt: SelectStatement =
+                keysetLast === undefined
+                    ? { ...keysetBase, top: SCAN_PAGE_SIZE }
+                    : {
+                          ...keysetBase,
+                          top: SCAN_PAGE_SIZE,
+                          where: andWhere(keysetBase.where, {
+                              kind: 'comparison',
+                              left: { column: key },
+                              operator: '>',
+                              right: String(keysetLast),
+                          }),
+                      };
+            result = await runFetchXml(query, fetchXmlOf(pageStmt), jsonColumns);
         } else {
             result = await runFetchXml(query, injectPagingIntoFetchXml(fetchXml, pagingCookie!, page), jsonColumns);
         }
@@ -512,16 +569,66 @@ async function fetchAllRows(
             if (!options.matches || options.matches(row)) rows.push(row);
         }
         options.onProgress?.(rows.length);
-        if (options.stopAfter !== undefined && rows.length >= options.stopAfter) break;
+        if (!clientSort && options.stopAfter !== undefined && rows.length >= options.stopAfter) break;
         if (scannedRows > maxRows) {
             throw new Error(
                 options.tooManyRows ??
                     `A subquery read more than ${maxRows.toLocaleString()} rows from '${stmt.from.table}'. Add filters to narrow it.`,
             );
         }
-        pagingCookie = result.pagingCookie;
-        if (!pagingCookie || result.rows.length === 0 || stmt.top !== undefined) break;
+        pagingCookie = keysetBase ? null : result.pagingCookie;
+        if (result.rows.length === 0 || stmt.top !== undefined) break;
+        if (!pagingCookie) {
+            // Dataverse doesn't always say there are more pages: a full page
+            // without a cookie may not be the last. Never fall back to page
+            // numbers alone, which repeat rows across pages.
+            if (result.rows.length < SCAN_PAGE_SIZE) break;
+            if (!keysetBase) {
+                // Page 1 may have swapped `<table>id` for `activityid`.
+                const pagedStmt =
+                    fetchXml === fetchXmlOf(scanStmt) ? scanStmt : (withActivityKey(scanStmt) ?? scanStmt);
+                const order = pagedStmt.orderBy ?? [];
+                const keyItem = order[order.length - 1];
+                const userOrder = order.slice(0, -1);
+                const keyOk = !!keyItem && !keyItem.column.table && keyItem.direction === 'ASC';
+                if (!canOrder || stmt.joins.length > 0 || !keyOk || !sortableClientSide(stmt, userOrder)) {
+                    throw new Error(
+                        `Dataverse returned a full page of ${SCAN_PAGE_SIZE.toLocaleString('en-US')} rows from '${stmt.from.table}' ` +
+                            `without a paging cookie, so the remaining rows can't be read reliably. Add filters to narrow the query.`,
+                    );
+                }
+                keysetBase = { ...pagedStmt, orderBy: [keyItem] };
+                if (userOrder.length > 0) {
+                    // Keyset needs the key order; re-read from the start and sort at the end.
+                    clientSort = userOrder;
+                    rows.length = 0;
+                    scannedRows = 0;
+                    keysetLast = undefined;
+                    page += 1;
+                    continue;
+                }
+            }
+            const key = keysetBase.orderBy![0].column.column;
+            const last = result.rows[result.rows.length - 1][key];
+            if (last == null) throw new Error(`Paged scan of '${stmt.from.table}' returned a row without '${key}'.`);
+            keysetLast = last;
+        }
         page += 1;
+    }
+    if (clientSort) {
+        const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        for (const item of clientSort) {
+            const key = item.column.column.toLowerCase();
+            if (rows.some((row) => typeof row[key] === 'string' && guidPattern.test(row[key] as string))) {
+                throw new Error(
+                    `Dataverse returned a full page of rows from '${stmt.from.table}' without a paging cookie, and ORDER BY ` +
+                        `${item.column.column} holds GUIDs, which can't be sorted client-side. Add filters to narrow the query.`,
+                );
+            }
+        }
+        const sorted = sortRows(rows, clientSort);
+        rows.length = 0;
+        rows.push(...sorted);
     }
     return {
         rows: options.stopAfter !== undefined ? rows.slice(0, options.stopAfter) : rows,
@@ -816,6 +923,7 @@ export async function executeSelect(
         const havingText = commentText(describeCondition(havingPlan.having));
         let groups: Record<string, unknown>[];
         let annotatedFetchXml: string;
+        let havingNote: string | undefined;
         try {
             const read = await fetchAllAggregatePages(query, fetchXml, onProgress);
             groups = applyReverseEntityAliases(read.rows, stmt.from.table);
@@ -830,30 +938,19 @@ export async function executeSelect(
                 assertVirtualFilterSupported(havingPlan.stmt, missing);
                 throw queryErr;
             }
-            // Same 50,000-record aggregate limit fallback as below,
-            // for `SELECT <col>, COUNT(*) … GROUP BY <col> HAVING …`.
-            const isAggregateLimit = queryErr instanceof Error && queryErr.message.includes('0x8004e023');
-            const groupMatch = isAggregateLimit ? isSimpleGroupByCount(havingPlan.stmt) : null;
-            if (!groupMatch) throw queryErr;
-            const fallback = await runPagedGroupByCountFallback(
-                query,
-                havingPlan.stmt,
-                groupMatch.groupColumn,
-                onProgress,
-            );
-            const groupKey = groupMatch.groupColumn.alias ?? groupMatch.groupColumn.column;
-            const countKey = groupMatch.aggregate.alias ?? 'count_all';
-            groups = Array.from(fallback.counts.entries()).map(([value, count]) => ({
-                [groupKey]: value === '' ? null : value,
-                [countKey]: count,
-            }));
-            if (havingPlan.stmt.orderBy) groups = sortRows(groups, havingPlan.stmt.orderBy);
+            // Over the 50,000-record limit: aggregate client-side (see below),
+            // then HAVING on the groups.
+            const plan = isAggregateLimitError(queryErr) ? planClientAggregate(havingPlan.stmt) : null;
+            if (!plan) throw queryErr;
+            const run = await runClientAggregate(query, plan, options);
+            groups = run.aggregator.rows(true);
+            havingNote = cancelledNote(run);
             annotatedFetchXml =
-                `<!-- Aggregate GROUP BY count exceeded Dataverse's 50,000-record limit (0x8004e023).\n` +
-                `     Recovered via paged scan: ${fallback.pageCount} page(s), ${fallback.scannedRows.toLocaleString()} row(s) scanned, ${fallback.counts.size} group(s) found, aggregated client-side.\n` +
+                `<!-- The aggregate exceeded Dataverse's 50,000-record limit (${AGGREGATE_LIMIT_CODE}).\n` +
+                `${describeScan(run)}\n` +
                 `     HAVING ${havingText} is evaluated client-side. -->\n` +
                 `<!-- Original (rejected): -->\n${fetchXml}\n` +
-                `<!-- Paged scan used for the GROUP BY: -->\n${fallback.scanFetchXml}`;
+                `<!-- First page of the scan: -->\n${run.scanFetchXml}`;
         }
         const rows = applyHaving(groups, havingPlan);
         const requested = getRequestedColumns(stmt);
@@ -865,7 +962,8 @@ export async function executeSelect(
             fetchXml: annotatedFetchXml,
             pagingCookie: null,
             jsonColumns,
-            summary: `${rows.length} of ${groups.length} group(s) matched HAVING`,
+            summary: `${rows.length} of ${groups.length} group(s) matched HAVING${havingNote ? ' (partial: cancelled)' : ''}`,
+            limitNote: havingNote,
         };
     }
 
@@ -912,81 +1010,33 @@ export async function executeSelect(
         resultRows = queryResult.rows;
         pagingCookie = queryResult.pagingCookie;
     } catch (queryErr) {
-        // Aggregate-limit fallback. Dataverse rejects aggregate
-        // queries that would scan more than 50,000 source records
-        // (error 0x8004e023). For simple COUNT(*) we can rerun as
-        // a paged scan and count client-side.
-        const isAggregateLimit = queryErr instanceof Error && queryErr.message.includes('0x8004e023');
-        if (!isAggregateLimit) {
-            throw queryErr;
-        }
-        // Branch A: simple `COUNT(*)` / `COUNT(<col>)` — one number.
-        if (isSimpleCount(effectiveStmt)) {
-            const fallback = await runPagedCountFallback(query, effectiveStmt, onProgress);
-            const agg = effectiveStmt.columns[0] as AggregateExpr;
-            const alias = agg.alias ?? `count_${agg.column.column === '*' ? 'all' : agg.column.column}`;
+        // Dataverse rejects an aggregate over more than 50,000 source records
+        // (0x8004e023): aggregate client-side from a scan. Counts stay exact,
+        // so there's no RetrieveTotalRecordCount shortcut (it's a snapshot).
+        if (!isAggregateLimitError(queryErr)) throw queryErr;
+        const plan = planClientAggregate(effectiveStmt);
+        if (plan) {
+            const run = await runClientAggregate(query, plan, options);
+            const rows = run.aggregator.rows();
+            const requested = getRequestedColumns(effectiveStmt);
+            const columns = requested
+                ? displayRequestedColumns(requested, extractColumns(rows), rows)
+                : extractColumns(rows);
+            const limitNote = cancelledNote(run);
             return {
-                rows: [{ [alias]: fallback.total }],
-                columns: [alias],
+                rows,
+                columns,
                 fetchXml:
-                    `<!-- Aggregate count exceeded Dataverse's 50,000-record limit (0x8004e023).\n` +
-                    `     Recovered via paged scan: ${fallback.pageCount} page(s), ${fallback.total} row(s) counted client-side. -->\n` +
+                    `<!-- The aggregate exceeded Dataverse's 50,000-record limit (${AGGREGATE_LIMIT_CODE}).\n` +
+                    `${describeScan(run)} -->\n` +
                     `<!-- Original (rejected): -->\n${fetchXml}\n` +
-                    `<!-- Paged scan used for the count: -->\n${fallback.scanFetchXml}`,
+                    `<!-- First page of the scan: -->\n${run.scanFetchXml}`,
                 pagingCookie: null,
                 jsonColumns,
-                summary: `${fallback.total.toLocaleString()} rows counted via paged scan`,
-            };
-        }
-
-        // Branch B: `SELECT <col>, COUNT(*) FROM <t> [WHERE …] GROUP BY <col>`.
-        const groupMatch = isSimpleGroupByCount(effectiveStmt);
-        if (groupMatch) {
-            const fallback = await runPagedGroupByCountFallback(
-                query,
-                effectiveStmt,
-                groupMatch.groupColumn,
-                onProgress,
-            );
-            const groupKey = groupMatch.groupColumn.alias ?? groupMatch.groupColumn.column;
-            const countKey = groupMatch.aggregate.alias ?? 'count_all';
-            let fallbackRows: Record<string, unknown>[] = Array.from(fallback.counts.entries()).map(
-                ([value, count]) => ({
-                    [groupKey]: value === '' ? null : value,
-                    [countKey]: count,
-                }),
-            );
-            // Apply user-specified ORDER BY (on group column or count alias).
-            if (effectiveStmt.orderBy && effectiveStmt.orderBy.length > 0) {
-                const orderRef = effectiveStmt.orderBy[0].column.column;
-                const descending = effectiveStmt.orderBy[0].direction === 'DESC';
-                fallbackRows.sort((a, b) => {
-                    const av = a[orderRef];
-                    const bv = b[orderRef];
-                    if (typeof av === 'number' && typeof bv === 'number') {
-                        return descending ? bv - av : av - bv;
-                    }
-                    const as = av == null ? '' : String(av);
-                    const bs = bv == null ? '' : String(bv);
-                    return descending ? bs.localeCompare(as) : as.localeCompare(bs);
-                });
-            }
-            // Apply TOP after the client-side sort so the truncated
-            // set matches what the aggregate query would have returned.
-            if (effectiveStmt.top !== undefined) {
-                fallbackRows = fallbackRows.slice(0, effectiveStmt.top);
-            }
-            return {
-                rows: fallbackRows,
-                columns: [groupKey, countKey],
-                fetchXml:
-                    `<!-- Aggregate GROUP BY count exceeded Dataverse's 50,000-record limit (0x8004e023).\n` +
-                    `     Recovered via paged scan: ${fallback.pageCount} page(s), ${fallback.scannedRows.toLocaleString()} row(s) scanned, ${fallback.counts.size} group(s) found, aggregated client-side. -->\n` +
-                    `<!-- Original (rejected): -->\n${fetchXml}\n` +
-                    `<!-- Paged scan used for the GROUP BY: -->\n${fallback.scanFetchXml}`,
-                pagingCookie: null,
-                jsonColumns,
-                summary: `${fallback.counts.size} group(s) from ${fallback.scannedRows.toLocaleString()} row(s) scanned`,
+                summary:
+                    `${rows.length} row(s) aggregated client-side from ${run.aggregator.scannedRows.toLocaleString('en-US')} rows read` +
+                    (limitNote ? ' (partial: cancelled)' : ''),
+                limitNote,
             };
         }
 
@@ -1046,6 +1096,12 @@ export async function executeSelect(
         columns = displayRequestedColumns(requestedCols, allColumns, rows);
     }
 
+    // Dataverse doesn't always flag more pages: a full page without a cookie
+    // may not be everything, and page numbers alone would repeat rows.
+    // Only for row results: an aggregate's groups carry no cookie by design.
+    const isAggregate = !!effectiveStmt.groupBy || effectiveStmt.columns.some(isAggregateExpr);
+    const fullPageWithoutCookie =
+        !isAggregate && !pagingCookie && effectiveStmt.top === undefined && rows.length >= SCAN_PAGE_SIZE;
     return {
         rows,
         columns,
@@ -1053,5 +1109,9 @@ export async function executeSelect(
         pagingCookie,
         jsonColumns,
         summary: `${rows.length} rows returned`,
+        limitNote: fullPageWithoutCookie
+            ? `Showing the first ${rows.length.toLocaleString('en-US')} rows. Dataverse sent no paging cookie, so ` +
+              `more rows may match but can't be loaded reliably: add TOP, filters, or an aggregate.`
+            : undefined,
     };
 }

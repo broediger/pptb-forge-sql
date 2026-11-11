@@ -8,6 +8,7 @@ import { QueryHistory } from './components/QueryHistory';
 import { SchemaExplorer } from './components/SchemaExplorer';
 import { DmlConfirmDialog } from './components/DmlConfirmDialog';
 import { DmlProgress } from './components/DmlProgress';
+import { ScanProgress } from './components/ScanProgress';
 import { SettingsPanel } from './components/SettingsPanel';
 import { useQueryExecution } from './hooks/useQueryExecution';
 import { useDmlExecution } from './hooks/useDmlExecution';
@@ -976,6 +977,15 @@ export default function App() {
                                                     )}
                                             </dl>
                                         </div>
+                                    </div>
+                                ) : queryExec.isExecuting && queryExec.scanProgress !== null ? (
+                                    /* Client-side aggregate scan (over the 50,000-record limit) */
+                                    <div className="p-4">
+                                        <ScanProgress
+                                            scannedRows={queryExec.scanProgress}
+                                            onCancel={queryExec.cancelScan}
+                                            isDark={isDark}
+                                        />
                                     </div>
                                 ) : queryExec.isExecuting && !activeTabResults.results ? (
                                     /* SELECT executing spinner */
