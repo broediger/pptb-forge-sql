@@ -570,3 +570,149 @@ describe('keyset paging over joins (fake Dataverse)', () => {
         expect(calls.length).toBe(3);
     });
 });
+
+describe('review fixes', () => {
+    it('refuses MIN/MAX over GUIDs instead of comparing them as text', async () => {
+        const { query } = limitedQuery(() => ({
+            value: [
+                { contactid: '1', _parentcustomerid_value: '10000000-0000-0000-0000-000000000002' },
+                { contactid: '2', _parentcustomerid_value: '20000000-0000-0000-0000-000000000001' },
+            ],
+        }));
+        await expect(run('SELECT MIN(parentcustomerid) AS m FROM contact', query)).rejects.toThrow(
+            /uniqueidentifier column can't be computed client-side/,
+        );
+    });
+
+    it('refuses a client-side ORDER BY over grouped GUIDs', async () => {
+        const { query } = limitedQuery(() => ({
+            value: [{ contactid: '1', _parentcustomerid_value: '10000000-0000-0000-0000-000000000002' }],
+        }));
+        await expect(
+            run(
+                'SELECT parentcustomerid, COUNT(*) AS n FROM contact GROUP BY parentcustomerid ORDER BY parentcustomerid',
+                query,
+            ),
+        ).rejects.toThrow(/ORDER BY parentcustomerid/);
+    });
+
+    it('fills every SELECT reference of a grouped column', async () => {
+        const { query } = limitedQuery(() => ({
+            value: [
+                { accountid: '1', name: 'Contoso' },
+                { accountid: '2', name: 'Contoso' },
+            ],
+        }));
+        const result = await run('SELECT name, name AS label, COUNT(*) AS n FROM account GROUP BY name', query);
+        expect(result.rows).toEqual([{ name: 'Contoso', label: 'Contoso', n: 2 }]);
+        expect(result.columns).toEqual(['name', 'label', 'n']);
+    });
+
+    it('fills a grouped column HAVING adds under a hidden alias', async () => {
+        const { query } = limitedQuery(() => ({
+            value: [
+                { accountid: '1', name: 'Contoso', statecode: 0 },
+                { accountid: '2', name: 'Fabrikam', statecode: 0 },
+                { accountid: '3', name: 'Fabrikam', statecode: 1 },
+            ],
+        }));
+        const result = await run(
+            "SELECT statecode, COUNT(*) AS n FROM account GROUP BY statecode, name HAVING name LIKE 'F%' ORDER BY statecode",
+            query,
+        );
+        expect(result.rows).toEqual([
+            { statecode: 0, n: 1 },
+            { statecode: 1, n: 1 },
+        ]);
+    });
+
+    it('sorts by a grouped column that is only in ORDER BY, then applies TOP', async () => {
+        const { query } = limitedQuery(() => ({
+            value: [
+                { contactid: '1', statecode: 2 },
+                { contactid: '2', statecode: 0 },
+                { contactid: '3', statecode: 2 },
+                { contactid: '4', statecode: 1 },
+            ],
+        }));
+        const result = await run(
+            'SELECT TOP 2 COUNT(*) AS c FROM contact GROUP BY statecode ORDER BY statecode DESC',
+            query,
+        );
+        expect(result.rows).toEqual([{ c: 2 }, { c: 1 }]);
+        expect(result.columns).toEqual(['c']);
+    });
+
+    it('averages over the numeric values only', async () => {
+        const { query } = limitedQuery(() => ({
+            value: [
+                { accountid: '1', x: 10 },
+                { accountid: '2', x: 'n/a' },
+                { accountid: '3', x: 20 },
+            ],
+        }));
+        const result = await run('SELECT AVG(x) AS a, SUM(x) AS s, COUNT(x) AS c FROM account', query);
+        expect(result.rows).toEqual([{ a: 15, s: 30, c: 3 }]);
+    });
+
+    it('counts DISTINCT case-insensitively per group', async () => {
+        const { query } = limitedQuery(() => ({
+            value: [
+                { accountid: '1', statecode: 0, name: 'A' },
+                { accountid: '2', statecode: 0, name: 'a' },
+                { accountid: '3', statecode: 0, name: 'B' },
+                { accountid: '4', statecode: 1, name: 'B' },
+            ],
+        }));
+        const result = await run(
+            'SELECT statecode, COUNT(DISTINCT name) AS d FROM account GROUP BY statecode ORDER BY statecode',
+            query,
+        );
+        expect(result.rows).toEqual([
+            { statecode: 0, d: 2 },
+            { statecode: 1, d: 1 },
+        ]);
+    });
+
+    it('does not note a missing paging cookie on a native aggregate with 5,000 groups', async () => {
+        const query: FetchXmlQueryFn = async () => ({
+            value: Array.from({ length: SCAN_PAGE_SIZE }, (_, i) => ({ name: String(i), n: 1 })),
+        });
+        const result = await run('SELECT name, COUNT(*) AS n FROM account GROUP BY name', query);
+        expect(result.limitNote).toBeUndefined();
+    });
+
+    it('re-reads a client-filtered scan with ORDER BY by primary key, then sorts client-side', async () => {
+        const notOn = (attr: string) =>
+            new Error(
+                `0x80041103: 'account' entity doesn't contain attribute with Name = '${attr}' and NameMapping = 'Logical'`,
+            );
+        const row = (i: number) => ({
+            accountid: guid(i),
+            name: `n${String(10_000 - i).padStart(5, '0')}`,
+            _ownerid_value: 'u',
+            // Only the last row of page 1 and the rows after it match the filter.
+            [`_ownerid_value${FMT}`]: i >= 4999 ? 'Ada' : 'Bob',
+        });
+        const calls: string[] = [];
+        const query: FetchXmlQueryFn = async (xml) => {
+            calls.push(xml);
+            if (xml.includes('owneridname')) throw notOn('owneridname');
+            if (calls.length === 2) return { value: Array.from({ length: SCAN_PAGE_SIZE }, (_, i) => row(i)) };
+            if (!xml.includes('operator="gt"'))
+                return { value: Array.from({ length: SCAN_PAGE_SIZE }, (_, i) => row(i)) };
+            return { value: [row(5000), row(5001)] };
+        };
+        const result = await executeSelect(
+            parse(tokenize("SELECT name, owneridname FROM account WHERE owneridname = 'Ada' ORDER BY name")),
+            query,
+            { rowLimit: 3 },
+        );
+        // Page 1 in user order, then a re-read ordered by the key alone, continued by keyset.
+        expect(calls[1]).toContain('<order attribute="name" />');
+        expect(calls[2]).not.toContain('<order attribute="name" />');
+        expect(calls[2]).toContain('<order attribute="accountid" />');
+        expect(calls[3]).toContain(`<condition attribute="accountid" operator="gt" value="${guid(4999)}" />`);
+        expect(result.rows.map((r) => r.name)).toEqual(['n04999', 'n05000', 'n05001']);
+    });
+});

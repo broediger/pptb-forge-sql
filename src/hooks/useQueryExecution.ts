@@ -3,6 +3,7 @@ import { tokenize, parseStatement, SqlParseError } from '../sql';
 import type { JsonValueColumn } from '../sql/jsonValue';
 import { extractColumns } from '../sql/columnResolution';
 import { executeSelect, fetchNextPage, type FetchXmlQueryFn } from '../sql/selectExecution';
+import { runGuard } from './runGuard';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -77,7 +78,8 @@ export function useQueryExecution(): QueryExecutionReturn {
 
         pageRef.current = 1;
         generationRef.current += 1;
-        const generation = generationRef.current;
+        // Callbacks and results of this run are ignored once a newer run starts.
+        const run = runGuard(() => generationRef.current);
         cancelScanRef.current = false;
 
         const start = performance.now();
@@ -92,15 +94,15 @@ export function useQueryExecution(): QueryExecutionReturn {
 
             jsonColumnsRef.current = [];
             const result = await executeSelect(parsed, queryDataverse, {
-                onProgress: (rowCount) => setState((prev) => ({ ...prev, rowCount })),
-                onFetchXml: (xml) => {
+                onProgress: run.guard((rowCount: number) => setState((prev) => ({ ...prev, rowCount }))),
+                onFetchXml: run.guard((xml: string) => {
                     fetchXml = xml;
-                },
-                onScanProgress: (scanProgress) => setState((prev) => ({ ...prev, scanProgress })),
-                isCancelled: () => cancelScanRef.current || generationRef.current !== generation,
+                }),
+                onScanProgress: run.guard((scanProgress: number) => setState((prev) => ({ ...prev, scanProgress }))),
+                isCancelled: () => cancelScanRef.current || !run.isCurrent(),
             });
             // A newer run started meanwhile (and cancelled this scan): its state wins.
-            if (generationRef.current !== generation) {
+            if (!run.isCurrent()) {
                 return { rowCount: null, executionTime: null, error: null };
             }
             jsonColumnsRef.current = result.jsonColumns;
@@ -135,6 +137,8 @@ export function useQueryExecution(): QueryExecutionReturn {
         } catch (err) {
             const end = performance.now();
             const executionTime = Math.round(end - start);
+            // A failure of a run that a newer one replaced isn't shown.
+            if (!run.isCurrent()) return { rowCount: null, executionTime, error: null };
 
             let errorMessage: string;
 

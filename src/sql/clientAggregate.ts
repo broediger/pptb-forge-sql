@@ -29,8 +29,12 @@ interface ValueSource {
 
 interface GroupColumn {
     source: ValueSource;
-    /** Result key when the column is in the SELECT list. */
-    outputKey?: string;
+    /**
+     * Result keys of the column: one per SELECT-list reference (a column can
+     * be selected twice, or added again by HAVING under a hidden alias), plus
+     * a hidden one when only ORDER BY uses it. Empty when it's only grouped.
+     */
+    outputKeys: string[];
 }
 
 interface AggregateColumn {
@@ -56,6 +60,8 @@ export interface ClientAggregatePlan {
     aggregates: AggregateColumn[];
     /** ORDER BY in terms of the result keys. */
     orderBy?: OrderByItem[];
+    /** Result keys added only for ORDER BY; removed from the result rows. */
+    hiddenKeys: string[];
     top?: number;
     /** No GROUP BY: one result row, even when nothing matches. */
     singleGroup: boolean;
@@ -115,7 +121,7 @@ export function planClientAggregate(stmt: SelectStatement): ClientAggregatePlan 
     for (const key of keyColumns) source(key);
 
     const groupBy = stmt.groupBy ?? [];
-    const groupColumns: GroupColumn[] = groupBy.map((g) => ({ source: source(g) }));
+    const groupColumns: GroupColumn[] = groupBy.map((g) => ({ source: source(g), outputKeys: [] }));
     const groupAliases = groupByColumnAliases(stmt);
     const aggregates: AggregateColumn[] = [];
     const orderKeys = new Map<string, string>();
@@ -146,18 +152,41 @@ export function planClientAggregate(stmt: SelectStatement): ClientAggregatePlan 
             throw new SqlParseError(`Column '${name}' must appear in GROUP BY or inside an aggregate function`, 0, 0);
         }
         const outputKey = col.alias ?? groupAliases[i] ?? col.column;
-        groupColumns[index].outputKey ??= outputKey;
-        orderKeys.set(`${refOf(col)}.${col.column.toLowerCase()}`, outputKey);
+        const keys = groupColumns[index].outputKeys;
+        if (!keys.includes(outputKey)) keys.push(outputKey);
+        const ref = `${refOf(col)}.${col.column.toLowerCase()}`;
+        if (!orderKeys.has(ref)) orderKeys.set(ref, outputKey);
     });
 
     // ORDER BY a grouped column sorts by its result key (it may be renamed,
     // e.g. `t2_statuscode`); aliases and aggregate keys are already result keys.
+    // A grouped column that's only in ORDER BY gets a hidden result key.
+    const hiddenKeys: string[] = [];
+    const usedKeys = new Set([
+        ...aggregates.map((a) => a.outputKey.toLowerCase()),
+        ...groupColumns.flatMap((g) => g.outputKeys.map((k) => k.toLowerCase())),
+    ]);
     const orderBy = stmt.orderBy?.map((item) => {
-        let key: string | undefined;
+        let ref: string | null;
         try {
-            key = orderKeys.get(`${refOf(item.column)}.${item.column.column.toLowerCase()}`);
+            ref = `${refOf(item.column)}.${item.column.column.toLowerCase()}`;
         } catch {
-            key = undefined;
+            ref = null;
+        }
+        let key = ref ? orderKeys.get(ref) : undefined;
+        if (!key && ref) {
+            const index = groupBy.findIndex((g) => sameColumn(g, item.column, refOf));
+            // An unqualified name that is already a result key (an alias) sorts by that key.
+            const isResultKey = !item.column.table && usedKeys.has(item.column.column.toLowerCase());
+            if (index !== -1 && !isResultKey) {
+                let n = hiddenKeys.length + 1;
+                while (usedKeys.has(`order_${n}`)) n += 1;
+                key = `order_${n}`;
+                usedKeys.add(key);
+                hiddenKeys.push(key);
+                groupColumns[index].outputKeys.push(key);
+                orderKeys.set(ref, key);
+            }
         }
         return key ? { ...item, column: { column: key } } : item;
     });
@@ -177,6 +206,7 @@ export function planClientAggregate(stmt: SelectStatement): ClientAggregatePlan 
         groupColumns,
         aggregates,
         orderBy,
+        hiddenKeys,
         top: stmt.top,
         singleGroup: groupBy.length === 0,
     };
@@ -276,11 +306,16 @@ function toNumber(value: unknown): number | null {
 }
 
 interface AggregateState {
+    /** Non-null values (COUNT). */
     count: number;
+    /** Numeric values summed (SUM, AVG). */
+    numeric: number;
     sum: number;
     min: unknown;
     max: unknown;
-    /** DISTINCT values by grouping key. */
+    /** COUNT(DISTINCT): only the grouping keys are needed. */
+    distinctKeys?: Set<string>;
+    /** SUM/AVG/MIN/MAX(DISTINCT): the values by grouping key. */
     distinct?: Map<string, unknown>;
 }
 
@@ -291,7 +326,35 @@ interface Group {
 }
 
 function newState(agg: AggregateExpr): AggregateState {
-    return { count: 0, sum: 0, min: null, max: null, distinct: agg.distinct ? new Map() : undefined };
+    const countDistinct = agg.distinct && agg.function === 'COUNT';
+    return {
+        count: 0,
+        numeric: 0,
+        sum: 0,
+        min: null,
+        max: null,
+        distinctKeys: countDistinct ? new Set() : undefined,
+        distinct: agg.distinct && !countDistinct ? new Map() : undefined,
+    };
+}
+
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * SQL Server orders uniqueidentifiers by byte groups, not as text, so the
+ * client can't order them; only Dataverse can.
+ */
+function isGuid(value: unknown): boolean {
+    return typeof value === 'string' && GUID_PATTERN.test(value);
+}
+
+function guidOrderError(what: string): SqlParseError {
+    return new SqlParseError(
+        `${what} on a uniqueidentifier column can't be computed client-side: SQL Server orders GUIDs by byte groups, ` +
+            `not as text. The query is over Dataverse's 50,000-record limit, so add filters to bring it under the limit.`,
+        0,
+        0,
+    );
 }
 
 function add(state: AggregateState, agg: AggregateColumn, row: Record<string, unknown>): void {
@@ -301,31 +364,43 @@ function add(state: AggregateState, agg: AggregateColumn, row: Record<string, un
     }
     const { value } = read(row, agg.source);
     if (value == null) return;
+    const fn = agg.agg.function;
+    if ((fn === 'MIN' || fn === 'MAX') && isGuid(value)) throw guidOrderError(fn);
+    if (state.distinctKeys) {
+        state.distinctKeys.add(groupingKey(value));
+        return;
+    }
     if (state.distinct) {
         const key = groupingKey(value);
         if (!state.distinct.has(key)) state.distinct.set(key, value);
         return;
     }
     state.count += 1;
-    if (agg.agg.function === 'SUM' || agg.agg.function === 'AVG') {
+    if (fn === 'SUM' || fn === 'AVG') {
         const n = toNumber(value);
-        if (n !== null) state.sum += n;
+        if (n !== null) {
+            state.sum += n;
+            state.numeric += 1;
+        }
+        return;
     }
-    if (state.min === null || compare(value, state.min) < 0) state.min = value;
-    if (state.max === null || compare(value, state.max) > 0) state.max = value;
+    if (fn === 'MIN' && (state.min === null || compare(value, state.min) < 0)) state.min = value;
+    if (fn === 'MAX' && (state.max === null || compare(value, state.max) > 0)) state.max = value;
 }
 
 function finish(state: AggregateState, agg: AggregateExpr): unknown {
-    let values: unknown[] | null = null;
-    if (state.distinct) values = [...state.distinct.values()];
-    const count = values ? values.length : state.count;
+    if (state.distinctKeys) return state.distinctKeys.size;
+    const values = state.distinct ? [...state.distinct.values()] : null;
     switch (agg.function) {
         case 'COUNT':
-            return count;
+            return state.count;
         case 'SUM':
         case 'AVG': {
+            // Only numeric values are summed, and AVG divides by their number.
+            const numbers = values ? values.map(toNumber).filter((n): n is number => n !== null) : null;
+            const count = numbers ? numbers.length : state.numeric;
             if (count === 0) return null;
-            const sum = values ? values.reduce<number>((s, v) => s + (toNumber(v) ?? 0), 0) : state.sum;
+            const sum = numbers ? numbers.reduce((s, n) => s + n, 0) : state.sum;
             return agg.function === 'SUM' ? sum : sum / count;
         }
         case 'MIN':
@@ -384,12 +459,13 @@ export class ClientAggregator {
         let rows = groups.map((group) => {
             const out: Record<string, unknown> = {};
             plan.groupColumns.forEach((g, i) => {
-                if (!g.outputKey) return;
-                out[g.outputKey] = group.values[i];
-                const formatted = group.formatted[i];
-                if (formatted !== undefined && formatted !== null) {
-                    out[`${g.outputKey}_formatted`] = formatted;
-                    if (!(`${g.outputKey}name` in out)) out[`${g.outputKey}name`] = formatted;
+                for (const key of g.outputKeys) {
+                    out[key] = group.values[i];
+                    const formatted = group.formatted[i];
+                    if (formatted !== undefined && formatted !== null) {
+                        out[`${key}_formatted`] = formatted;
+                        if (!(`${key}name` in out)) out[`${key}name`] = formatted;
+                    }
                 }
             });
             plan.aggregates.forEach((a, i) => {
@@ -397,9 +473,25 @@ export class ClientAggregator {
             });
             return out;
         });
-        if (raw) return plan.orderBy ? sortRows(rows, plan.orderBy) : rows;
-        if (plan.orderBy) rows = sortRows(rows, plan.orderBy);
-        if (plan.top !== undefined) rows = rows.slice(0, plan.top);
-        return rows;
+        if (plan.orderBy) {
+            assertNoGuidOrder(rows, plan.orderBy);
+            rows = sortRows(rows, plan.orderBy);
+        }
+        if (!raw && plan.top !== undefined) rows = rows.slice(0, plan.top);
+        return plan.hiddenKeys.length > 0 ? withoutKeys(rows, plan.hiddenKeys) : rows;
     }
+}
+
+/** ORDER BY over GUID values would sort them as text; refuse instead. */
+function assertNoGuidOrder(rows: Record<string, unknown>[], orderBy: OrderByItem[]): void {
+    for (const item of orderBy) {
+        const key = item.column.column;
+        if (rows.some((row) => isGuid(row[key]))) throw guidOrderError(`ORDER BY ${key}`);
+    }
+}
+
+/** Drop hidden keys (and their `_formatted` / `…name` companions) from result rows. */
+function withoutKeys(rows: Record<string, unknown>[], keys: string[]): Record<string, unknown>[] {
+    const hidden = new Set(keys.flatMap((k) => [k, `${k}_formatted`, `${k}name`]));
+    return rows.map((row) => Object.fromEntries(Object.entries(row).filter(([k]) => !hidden.has(k))));
 }

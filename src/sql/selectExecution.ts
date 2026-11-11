@@ -1,5 +1,5 @@
 import { generateFetchXml } from './generator';
-import type { SelectStatement, WhereExpr, ColumnRef, InSubqueryExpr, LiteralValue } from './types';
+import type { SelectStatement, WhereExpr, ColumnRef, InSubqueryExpr, LiteralValue, OrderByItem } from './types';
 import { isAggregateExpr, isColumnRef, isJsonValueExpr } from './types';
 import { getJsonValueColumns, applyJsonValues, type JsonValueColumn } from './jsonValue';
 import {
@@ -481,6 +481,23 @@ interface ReadAllResult {
     scannedRows: number;
 }
 
+function andWhere(left: WhereExpr | undefined, right: WhereExpr): WhereExpr {
+    return left ? { kind: 'and', left, right } : right;
+}
+
+/**
+ * Whether ORDER BY can be redone client-side on the scanned rows: each column
+ * must come back in the rows (selected, or SELECT *) and must not hold GUIDs,
+ * which only SQL Server can order (checked on the rows before sorting).
+ */
+function sortableClientSide(stmt: SelectStatement, order: OrderByItem[]): boolean {
+    if (order.length === 0) return true;
+    const requested = getRequestedColumns(stmt);
+    if (requested === null) return true;
+    const names = new Set(requested.map((r) => r.toLowerCase()));
+    return order.every((o) => !o.column.table && names.has(o.column.column.toLowerCase()));
+}
+
 /**
  * Read every page of a query. Used for subquery values, for split queries,
  * and for client-side WHERE filters, where the results must be complete.
@@ -512,9 +529,13 @@ async function fetchAllRows(
     let scannedRows = 0;
     let page = 1;
     let pagingCookie: string | null = null;
-    // Set when a full page came back without a paging cookie: continue after
-    // the last primary key instead (only when ordered by the key alone).
-    let keysetStmt: SelectStatement | null = null;
+    // Set once a full page came back without a paging cookie: the scan then
+    // continues by keyset on the primary key (`pk > last`). With an ORDER BY
+    // of its own, the scan restarts ordered by the key alone and sorts
+    // client-side at the end (`clientSort`).
+    let keysetBase: SelectStatement | null = null;
+    let keysetLast: unknown = undefined;
+    let clientSort: OrderByItem[] | null = null;
     while (true) {
         let result: Awaited<ReturnType<typeof runFetchXml>>;
         if (page === 1) {
@@ -523,8 +544,22 @@ async function fetchAllRows(
                 (xml) => runFetchXml(query, xml, jsonColumns),
                 options.onFetchXml,
             ));
-        } else if (keysetStmt) {
-            result = await runFetchXml(query, fetchXmlOf(keysetStmt), jsonColumns);
+        } else if (keysetBase) {
+            const key = keysetBase.orderBy![0].column.column;
+            const pageStmt: SelectStatement =
+                keysetLast === undefined
+                    ? { ...keysetBase, top: SCAN_PAGE_SIZE }
+                    : {
+                          ...keysetBase,
+                          top: SCAN_PAGE_SIZE,
+                          where: andWhere(keysetBase.where, {
+                              kind: 'comparison',
+                              left: { column: key },
+                              operator: '>',
+                              right: String(keysetLast),
+                          }),
+                      };
+            result = await runFetchXml(query, fetchXmlOf(pageStmt), jsonColumns);
         } else {
             result = await runFetchXml(query, injectPagingIntoFetchXml(fetchXml, pagingCookie!, page), jsonColumns);
         }
@@ -534,40 +569,66 @@ async function fetchAllRows(
             if (!options.matches || options.matches(row)) rows.push(row);
         }
         options.onProgress?.(rows.length);
-        if (options.stopAfter !== undefined && rows.length >= options.stopAfter) break;
+        if (!clientSort && options.stopAfter !== undefined && rows.length >= options.stopAfter) break;
         if (scannedRows > maxRows) {
             throw new Error(
                 options.tooManyRows ??
                     `A subquery read more than ${maxRows.toLocaleString()} rows from '${stmt.from.table}'. Add filters to narrow it.`,
             );
         }
-        pagingCookie = keysetStmt ? null : result.pagingCookie;
+        pagingCookie = keysetBase ? null : result.pagingCookie;
         if (result.rows.length === 0 || stmt.top !== undefined) break;
         if (!pagingCookie) {
             // Dataverse doesn't always say there are more pages: a full page
             // without a cookie may not be the last. Never fall back to page
             // numbers alone, which repeat rows across pages.
             if (result.rows.length < SCAN_PAGE_SIZE) break;
-            // Page 1 may have swapped `<table>id` for `activityid`.
-            const pagedStmt = fetchXml === fetchXmlOf(scanStmt) ? scanStmt : (withActivityKey(scanStmt) ?? scanStmt);
-            const order = pagedStmt.orderBy ?? [];
-            const key = order.length === 1 && !order[0].column.table ? order[0].column.column : null;
-            if (!canOrder || stmt.joins.length > 0 || !key || order[0].direction !== 'ASC') {
-                throw new Error(
-                    `Dataverse returned a full page of ${SCAN_PAGE_SIZE.toLocaleString('en-US')} rows from '${stmt.from.table}' ` +
-                        `without a paging cookie, so the remaining rows can't be read reliably. Add filters to narrow the query.`,
-                );
+            if (!keysetBase) {
+                // Page 1 may have swapped `<table>id` for `activityid`.
+                const pagedStmt =
+                    fetchXml === fetchXmlOf(scanStmt) ? scanStmt : (withActivityKey(scanStmt) ?? scanStmt);
+                const order = pagedStmt.orderBy ?? [];
+                const keyItem = order[order.length - 1];
+                const userOrder = order.slice(0, -1);
+                const keyOk = !!keyItem && !keyItem.column.table && keyItem.direction === 'ASC';
+                if (!canOrder || stmt.joins.length > 0 || !keyOk || !sortableClientSide(stmt, userOrder)) {
+                    throw new Error(
+                        `Dataverse returned a full page of ${SCAN_PAGE_SIZE.toLocaleString('en-US')} rows from '${stmt.from.table}' ` +
+                            `without a paging cookie, so the remaining rows can't be read reliably. Add filters to narrow the query.`,
+                    );
+                }
+                keysetBase = { ...pagedStmt, orderBy: [keyItem] };
+                if (userOrder.length > 0) {
+                    // Keyset needs the key order; re-read from the start and sort at the end.
+                    clientSort = userOrder;
+                    rows.length = 0;
+                    scannedRows = 0;
+                    keysetLast = undefined;
+                    page += 1;
+                    continue;
+                }
             }
+            const key = keysetBase.orderBy![0].column.column;
             const last = result.rows[result.rows.length - 1][key];
             if (last == null) throw new Error(`Paged scan of '${stmt.from.table}' returned a row without '${key}'.`);
-            const after: WhereExpr = { kind: 'comparison', left: { column: key }, operator: '>', right: String(last) };
-            keysetStmt = {
-                ...pagedStmt,
-                top: SCAN_PAGE_SIZE,
-                where: pagedStmt.where ? { kind: 'and', left: pagedStmt.where, right: after } : after,
-            };
+            keysetLast = last;
         }
         page += 1;
+    }
+    if (clientSort) {
+        const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        for (const item of clientSort) {
+            const key = item.column.column.toLowerCase();
+            if (rows.some((row) => typeof row[key] === 'string' && guidPattern.test(row[key] as string))) {
+                throw new Error(
+                    `Dataverse returned a full page of rows from '${stmt.from.table}' without a paging cookie, and ORDER BY ` +
+                        `${item.column.column} holds GUIDs, which can't be sorted client-side. Add filters to narrow the query.`,
+                );
+            }
+        }
+        const sorted = sortRows(rows, clientSort);
+        rows.length = 0;
+        rows.push(...sorted);
     }
     return {
         rows: options.stopAfter !== undefined ? rows.slice(0, options.stopAfter) : rows,
@@ -1037,8 +1098,10 @@ export async function executeSelect(
 
     // Dataverse doesn't always flag more pages: a full page without a cookie
     // may not be everything, and page numbers alone would repeat rows.
+    // Only for row results: an aggregate's groups carry no cookie by design.
+    const isAggregate = !!effectiveStmt.groupBy || effectiveStmt.columns.some(isAggregateExpr);
     const fullPageWithoutCookie =
-        !pagingCookie && effectiveStmt.top === undefined && resultRows.length >= SCAN_PAGE_SIZE;
+        !isAggregate && !pagingCookie && effectiveStmt.top === undefined && rows.length >= SCAN_PAGE_SIZE;
     return {
         rows,
         columns,
@@ -1047,7 +1110,7 @@ export async function executeSelect(
         jsonColumns,
         summary: `${rows.length} rows returned`,
         limitNote: fullPageWithoutCookie
-            ? `Showing the first ${resultRows.length.toLocaleString('en-US')} rows. Dataverse sent no paging cookie, so ` +
+            ? `Showing the first ${rows.length.toLocaleString('en-US')} rows. Dataverse sent no paging cookie, so ` +
               `more rows may match but can't be loaded reliably: add TOP, filters, or an aggregate.`
             : undefined,
     };
