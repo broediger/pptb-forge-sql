@@ -44,19 +44,28 @@ export function FetchXmlInspector({ fetchXml, theme }: FetchXmlInspectorProps) {
     const sendTo = (tool: ToolChoice) => {
         setMenuOpen(false);
         if (!fetchXml) return;
-        window.toolboxAPI.invocation
-            .launchTool(tool.id, fetchXmlPrefill(fetchXml), { noReturn: true })
-            .catch((err: unknown) => {
-                try {
-                    window.toolboxAPI.utils.showNotification({
-                        title: `Could not open ${tool.name}`,
-                        body: err instanceof Error ? err.message : String(err),
-                        type: 'error',
-                    });
-                } catch {
-                    // toolboxAPI may not be available
-                }
-            });
+        const notifyFailure = (err: unknown) => {
+            try {
+                window.toolboxAPI.utils.showNotification({
+                    title: `Could not open ${tool.name}`,
+                    body: err instanceof Error ? err.message : String(err),
+                    type: 'error',
+                });
+            } catch {
+                // toolboxAPI may not be available
+            }
+        };
+        // The host may lack launchTool (older PPTB), or it may throw synchronously.
+        try {
+            const invocation = window.toolboxAPI?.invocation;
+            if (typeof invocation?.launchTool !== 'function') {
+                notifyFailure(new Error('This version of Power Platform ToolBox cannot open other tools.'));
+                return;
+            }
+            invocation.launchTool(tool.id, fetchXmlPrefill(fetchXml), { noReturn: true }).catch(notifyFailure);
+        } catch (err) {
+            notifyFailure(err);
+        }
     };
 
     const handleCopy = async () => {

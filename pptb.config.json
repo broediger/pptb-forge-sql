@@ -6,13 +6,13 @@
                 "sql": {
                     "type": "string",
                     "title": "SQL query",
-                    "description": "A single SELECT statement against Dataverse, using table and column logical names (e.g. SELECT TOP 10 name, ownerid FROM account WHERE statecode = 0). Supports JOIN, WHERE, GROUP BY, HAVING, ORDER BY, TOP, DISTINCT, IN (SELECT ...) and JSON_VALUE. INSERT, UPDATE and DELETE are rejected.",
+                    "description": "A single SELECT statement against Dataverse, using table and column logical names (e.g. SELECT TOP 10 name, ownerid FROM account WHERE statecode = 0). Supports JOIN, WHERE, GROUP BY, HAVING, ORDER BY, TOP, DISTINCT, IN (SELECT ...) and JSON_VALUE. Headless (MCP) calls run SELECT only and reject INSERT, UPDATE and DELETE. When the tool window is opened with it, the statement is put into the editor and not run: the user reviews it and runs it, and INSERT, UPDATE and DELETE go through the usual preview and confirmation.",
                     "required": true
                 },
                 "maxRows": {
                     "type": "number",
                     "title": "Maximum rows",
-                    "description": "Maximum number of rows to return (default 500, at most 5000). moreRecords is true when more rows exist; narrow the query or use TOP."
+                    "description": "Headless (MCP) calls only: maximum number of rows to return (default 500, at most 5000). moreRecords is true when more rows exist; narrow the query or use TOP."
                 }
             }
         },
