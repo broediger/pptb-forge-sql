@@ -1,12 +1,12 @@
 {
     "name": "pptb-forge-sql",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "lockfileVersion": 3,
     "requires": true,
     "packages": {
         "": {
             "name": "pptb-forge-sql",
-            "version": "1.3.0",
+            "version": "1.4.0",
             "license": "MIT",
             "dependencies": {
                 "@monaco-editor/react": "^4.7.0",

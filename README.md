@@ -41,6 +41,12 @@ FetchXML has no HAVING, so Forge SQL evaluates it client-side: it reads every gr
 - At most 50,000 groups are read before HAVING is applied.
 - HAVING can't be combined with an `IN (SELECT …)` subquery that returns more than 250 values.
 
+Dataverse refuses an aggregate over more than 50,000 records (`0x8004e023`). Forge SQL then computes it client-side, like SQL 4 CDS: it reads the matching rows without aggregation, page by page (only the grouped and aggregated columns plus the primary keys), and calculates the result. The results are exact, joins and `COUNT(DISTINCT)` included. While the rows are read, the results area shows how many have been read so far, and **Cancel** stops the read and shows the values so far, marked as partial. The FetchXML tab shows the rejected query and the scan that replaced it. Limits:
+
+- `MIN`/`MAX` and `ORDER BY` on a GUID (lookup or ID) column aren't supported in this mode, because only SQL Server can order GUIDs correctly.
+- Large tables take a while: about one request per 5,000 rows.
+- Through MCP, the read stops with an error after 2,000,000 rows.
+
 ### INSERT
 
 ```sql
