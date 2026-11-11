@@ -4,13 +4,7 @@ import { parse } from '../parser';
 import { generateFetchXml } from '../generator';
 import { executeSelect, type FetchXmlQueryFn, type FetchXmlQueryResult } from '../selectExecution';
 import type { SelectExecutionOptions } from '../selectExecution';
-import {
-    SCAN_PAGE_SIZE,
-    isPlainTableCount,
-    keysetCondition,
-    parseTotalRecordCount,
-    planClientAggregate,
-} from '../clientAggregate';
+import { SCAN_PAGE_SIZE, keysetCondition, planClientAggregate } from '../clientAggregate';
 
 const COOKIE_KEY = '@Microsoft.Dynamics.CRM.fetchxmlpagingcookie';
 const FMT = '@OData.Community.Display.V1.FormattedValue';
@@ -302,30 +296,13 @@ describe('client-side aggregates', () => {
         expect(result.rows).toEqual([{ n: 1 }]);
     });
 
-    it('uses RetrieveTotalRecordCount for a plain COUNT(*), and scans when it fails', async () => {
-        const { query, calls } = limitedQuery(() => ({ value: [{ accountid: '1' }] }));
-        const snapshot = await run('SELECT COUNT(*) AS n FROM account', query, {
-            totalRecordCount: async () => 123_456,
-        });
-        expect(snapshot.rows).toEqual([{ n: 123_456 }]);
-        expect(snapshot.fetchXml).toContain('RetrieveTotalRecordCount');
-        expect(calls).toHaveLength(1);
-
-        const scanned = await run('SELECT COUNT(*) AS n FROM account', query, {
-            totalRecordCount: async () => {
-                throw new Error('not supported');
-            },
-        });
-        expect(scanned.rows).toEqual([{ n: 1 }]);
-    });
-
-    it('does not use RetrieveTotalRecordCount with a filter or join', async () => {
-        let used = false;
-        const { query } = limitedQuery(() => ({ value: [] }));
-        await run('SELECT COUNT(*) FROM account WHERE statecode = 0', query, {
-            totalRecordCount: async () => ((used = true), 1),
-        });
-        expect(used).toBe(false);
+    it('counts a plain COUNT(*) exactly by scanning (no record-count snapshot)', async () => {
+        const { query, calls } = limitedQuery(() => ({ value: [{ accountid: '1' }, { accountid: '2' }] }));
+        const result = await run('SELECT COUNT(*) AS n FROM account', query);
+        expect(result.rows).toEqual([{ n: 2 }]);
+        expect(calls).toHaveLength(2);
+        expect(result.fetchXml).not.toContain('RetrieveTotalRecordCount');
+        expect(result.fetchXml).toContain('Computed client-side');
     });
 });
 
@@ -373,7 +350,22 @@ describe('planClientAggregate', () => {
         expect(planClientAggregate(parse(tokenize('SELECT name FROM account')))).toBeNull();
     });
 
-    it('builds the keyset condition with NULL-aware comparisons', () => {
+    it('builds a lexicographic keyset condition across all keys', () => {
+        const keys = [
+            { column: 'accountid' },
+            { table: 'c', column: 'contactid' },
+            { table: 'o', column: 'opportunityid' },
+        ];
+        const eq = (i: number, v: string) => ({ kind: 'comparison', left: keys[i], operator: '=', right: v });
+        const gt = (i: number, v: string) => ({ kind: 'comparison', left: keys[i], operator: '>', right: v });
+        expect(keysetCondition(keys, ['a', 'b', 'c'])).toEqual({
+            kind: 'or',
+            left: { kind: 'or', left: gt(0, 'a'), right: { kind: 'and', left: eq(0, 'a'), right: gt(1, 'b') } },
+            right: { kind: 'and', left: eq(0, 'a'), right: { kind: 'and', left: eq(1, 'b'), right: gt(2, 'c') } },
+        });
+    });
+
+    it('compares a NULL key with null / not-null', () => {
         const keys = [{ column: 'accountid' }, { table: 'c', column: 'contactid' }];
         expect(keysetCondition(keys, ['a', null])).toEqual({
             kind: 'or',
@@ -384,18 +376,197 @@ describe('planClientAggregate', () => {
                 right: { kind: 'is_null', column: keys[1], negated: true },
             },
         });
+        const xml = generateFetchXml({
+            type: 'select',
+            columns: [{ column: 'accountid' }],
+            from: { table: 'account' },
+            joins: [],
+            where: keysetCondition([keys[1], keys[0]], [null, 'a']),
+        });
+        expect(xml).toContain('<condition attribute="contactid" entityname="c" operator="not-null" />');
+        expect(xml).toContain('<condition attribute="contactid" entityname="c" operator="null" />');
+    });
+});
+
+// ── A fake Dataverse that evaluates the scan's filter ──
+//
+// Rows are joined (account, contact) key pairs, held in the fake server's own
+// order (NULL first). Only the server orders and compares keys; the client
+// never sees anything but the pages.
+
+type KeyRow = { a: string; c: string | null };
+
+interface FilterNode {
+    type: 'and' | 'or';
+    children: (FilterNode | ConditionNode)[];
+}
+interface ConditionNode {
+    attribute: string;
+    entityname?: string;
+    operator: string;
+    value?: string;
+}
+
+function parseFilter(xml: string): FilterNode | null {
+    const start = xml.indexOf('<filter');
+    if (start === -1) return null;
+    const tokens = xml.slice(start).match(/<filter type="(and|or)">|<\/filter>|<condition [^>]*\/>/g) ?? [];
+    const stack: FilterNode[] = [];
+    let root: FilterNode | null = null;
+    for (const token of tokens) {
+        if (token.startsWith('<filter')) {
+            const node: FilterNode = { type: token.includes('"or"') ? 'or' : 'and', children: [] };
+            if (stack.length) stack[stack.length - 1].children.push(node);
+            else root = node;
+            stack.push(node);
+        } else if (token === '</filter>') {
+            stack.pop();
+            if (!stack.length) break;
+        } else {
+            const attr = (name: string) => token.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+            stack[stack.length - 1].children.push({
+                attribute: attr('attribute')!,
+                entityname: attr('entityname'),
+                operator: attr('operator')!,
+                value: attr('value'),
+            });
+        }
+    }
+    return root;
+}
+
+/** The fake server's ordering of key values: NULL first, then by value. */
+function serverCompare(x: string | null, y: string | null): number {
+    if (x === y) return 0;
+    if (x === null) return -1;
+    if (y === null) return 1;
+    return x < y ? -1 : 1;
+}
+
+function matches(node: FilterNode | ConditionNode, row: KeyRow): boolean {
+    if ('children' in node) {
+        return node.type === 'and'
+            ? node.children.every((c) => matches(c, row))
+            : node.children.some((c) => matches(c, row));
+    }
+    const value = node.entityname === 'c' ? row.c : node.attribute === 'accountid' ? row.a : undefined;
+    if (value === undefined) return true; // not a key condition
+    switch (node.operator) {
+        case 'null':
+            return value === null;
+        case 'not-null':
+            return value !== null;
+        case 'eq':
+            return value !== null && serverCompare(value, node.value!) === 0;
+        case 'gt':
+            return value !== null && serverCompare(value, node.value!) > 0;
+        default:
+            throw new Error(`fake: unexpected operator ${node.operator}`);
+    }
+}
+
+/** Serves `data` (in server order) to the scan, recording which rows went out. */
+function fakeServer(data: KeyRow[], misbehave?: (page: KeyRow[], call: number) => KeyRow[]) {
+    const sorted = [...data].sort((x, y) => serverCompare(x.a, y.a) || serverCompare(x.c, y.c));
+    const served: KeyRow[] = [];
+    const calls: string[] = [];
+    const query: FetchXmlQueryFn = async (xml) => {
+        calls.push(xml);
+        if (xml.includes('aggregate="true"')) throw new Error(LIMIT_ERROR);
+        expect(xml).toContain('<order attribute="accountid" />');
+        expect(xml).toContain('<order attribute="contactid" entityname="c" />');
+        const filter = parseFilter(xml);
+        const top = Number(xml.match(/top="(\d+)"/)?.[1] ?? SCAN_PAGE_SIZE);
+        let page = sorted.filter((row) => !filter || matches(filter, row)).slice(0, top);
+        if (misbehave) page = misbehave(page, calls.length);
+        served.push(...page);
+        return {
+            value: page.map((row) => ({ accountid: row.a, ...(row.c === null ? {} : { 'c.contactid': row.c }) })),
+        };
+    };
+    return { query, calls, served };
+}
+
+const JOIN_SQL =
+    'SELECT COUNT(*) AS n, COUNT(c.contactid) AS contacts, COUNT(DISTINCT a.accountid) AS accounts ' +
+    'FROM account a LEFT JOIN contact c ON c.parentcustomerid = a.accountid';
+
+const id = (prefix: string, n: number) => `${prefix}${String(n).padStart(6, '0')}`;
+const tupleCounts = (rows: KeyRow[]) => {
+    const counts = new Map<string, number>();
+    for (const r of rows) counts.set(`${r.a}|${r.c}`, (counts.get(`${r.a}|${r.c}`) ?? 0) + 1);
+    return counts;
+};
+/** Every row of `data` was served exactly once: nothing skipped, nothing repeated. */
+const expectServedOnce = (data: KeyRow[], served: KeyRow[]) => {
+    const counts = tupleCounts(served);
+    expect(counts.size).toBe(data.length);
+    expect([...counts.values()].every((n) => n === 1)).toBe(true);
+    for (const r of data) expect(counts.has(`${r.a}|${r.c}`)).toBe(true);
+};
+
+describe('keyset paging over joins (fake Dataverse)', () => {
+    it('pages through one record whose linked rows fill more than two pages', async () => {
+        const data: KeyRow[] = [
+            ...Array.from({ length: 12_000 }, (_, i) => ({ a: id('a', 1), c: id('c', i) })),
+            { a: id('a', 2), c: null }, // outer join without a match
+            ...Array.from({ length: 3 }, (_, i) => ({ a: id('a', 3), c: id('d', i) })),
+        ];
+        const { query, calls, served } = fakeServer(data);
+        const result = await run(JOIN_SQL, query);
+        expect(result.rows).toEqual([{ n: 12_004, contacts: 12_003, accounts: 3 }]);
+        expect(calls).toHaveLength(1 + 3);
+        expectServedOnce(data, served);
+        // Page 2 continues inside account a000001.
+        expect(calls[2]).toContain(`<condition attribute="accountid" operator="eq" value="${id('a', 1)}" />`);
+        expect(calls[2]).toContain(
+            `<condition attribute="contactid" entityname="c" operator="gt" value="${id('c', 4999)}" />`,
+        );
     });
 
-    it('recognises a plain table count', () => {
-        expect(isPlainTableCount(parse(tokenize('SELECT COUNT(*) FROM account')))).toBe(true);
-        expect(isPlainTableCount(parse(tokenize('SELECT COUNT(*) FROM account WHERE statecode = 0')))).toBe(false);
-        expect(isPlainTableCount(parse(tokenize('SELECT COUNT(name) FROM account')))).toBe(false);
+    it('handles fan-out across a page boundary and a page ending on a NULL linked key', async () => {
+        const data: KeyRow[] = [
+            // 4,997 single rows, then account a004998 with 6 contacts on rows 4,998–5,003.
+            ...Array.from({ length: 4997 }, (_, i) => ({ a: id('a', i + 1), c: id('c', i + 1) })),
+            ...Array.from({ length: 6 }, (_, i) => ({ a: id('a', 4998), c: id('x', i) })),
+            // Rows 5,004–9,999, then row 10,000 is an account without contacts.
+            ...Array.from({ length: 4996 }, (_, i) => ({ a: id('b', i + 1), c: id('y', i) })),
+            { a: id('b', 99_999), c: null },
+            // After the NULL key: more rows that must not be skipped or repeated.
+            ...Array.from({ length: 4 }, (_, i) => ({ a: id('e', 1), c: id('z', i) })),
+        ];
+        const { query, calls, served } = fakeServer(data);
+        const result = await run(JOIN_SQL, query);
+        expect(result.rows).toEqual([{ n: 10_004, contacts: 10_003, accounts: 4997 + 1 + 4996 + 1 + 1 }]);
+        expectServedOnce(data, served);
+        // Page 3 starts after (b099999, NULL): same account with a non-null contact, or a later account.
+        expect(calls[3]).toContain(`<condition attribute="contactid" entityname="c" operator="not-null" />`);
+        expect(calls[3]).toContain(`<condition attribute="accountid" operator="gt" value="${id('b', 99_999)}" />`);
+        expect(calls).toHaveLength(1 + 3);
     });
 
-    it('reads a RetrieveTotalRecordCount response', () => {
-        const response = { EntityRecordCountCollection: { Count: 1, Keys: ['account'], Values: [204_123] } };
-        expect(parseTotalRecordCount(response, 'Account')).toBe(204_123);
-        expect(parseTotalRecordCount(response, 'contact')).toBeNull();
-        expect(parseTotalRecordCount({}, 'account')).toBeNull();
+    it('drops a row the server repeats across the page boundary, by its full key tuple', async () => {
+        const data: KeyRow[] = Array.from({ length: 5003 }, (_, i) => ({
+            a: id('a', Math.floor(i / 3)),
+            c: id('c', i),
+        }));
+        let previousLast: KeyRow | null = null;
+        const { query, served } = fakeServer(data, (page) => {
+            const out = previousLast ? [previousLast, ...page.slice(0, SCAN_PAGE_SIZE - 1)] : page;
+            previousLast = page[page.length - 1];
+            return out;
+        });
+        const result = await run(JOIN_SQL, query);
+        expect(tupleCounts(served).get(`${data[4999].a}|${data[4999].c}`)).toBe(2);
+        expect(result.rows).toEqual([{ n: 5003, contacts: 5003, accounts: 1668 }]);
+        expect(result.fetchXml).toContain('1 repeated row(s) dropped');
+    });
+
+    it('fails instead of looping when the server returns the same page again', async () => {
+        const data: KeyRow[] = Array.from({ length: 6000 }, (_, i) => ({ a: id('a', i), c: id('c', i) }));
+        let first: KeyRow[] | null = null;
+        const { query, calls } = fakeServer(data, (page) => (first ??= page));
+        await expect(run(JOIN_SQL, query)).rejects.toThrow(/doesn't advance/);
+        expect(calls.length).toBe(3);
     });
 });

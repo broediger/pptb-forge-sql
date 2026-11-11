@@ -29,7 +29,7 @@ import {
     SCAN_PAGE_SIZE,
     ClientAggregator,
     isAggregateLimitError,
-    isPlainTableCount,
+    keyTuple,
     keyValues,
     planClientAggregate,
     scanAfter,
@@ -88,11 +88,6 @@ export interface SelectExecutionOptions {
     onScanProgress?: (scannedRows: number) => void;
     /** Max rows a client-side aggregate scan may read before it fails; unlimited when unset. */
     maxScanRows?: number;
-    /**
-     * Record count of a table from RetrieveTotalRecordCount, for `SELECT COUNT(*)
-     * FROM <table>` over the limit. Without it (or when it fails) the rows are counted.
-     */
-    totalRecordCount?: (table: string) => Promise<number | null>;
 }
 
 /** Rows returned by a client-side filtered query without TOP: one Dataverse page's worth. */
@@ -307,6 +302,8 @@ interface ClientAggregateRun {
     /** Keyset paging (joins) instead of the paging cookie. */
     keyset: boolean;
     cancelled: boolean;
+    /** Rows dropped because their key tuple had already been read. */
+    duplicates: number;
 }
 
 /**
@@ -335,12 +332,15 @@ async function runClientAggregate(
     let scanFetchXml = '';
     let pagingCookie: string | null = null;
     let lastKeys: unknown[] = [];
+    let lastTuple: string | null = null;
+    let duplicates = 0;
     const done = (pageCount: number, cancelled = false): ClientAggregateRun => ({
         aggregator,
         pageCount,
         scanFetchXml,
         keyset,
         cancelled,
+        duplicates,
     });
     const pageStmt = () => ({ ...keyPlan.scanStmt, top: SCAN_PAGE_SIZE });
 
@@ -376,7 +376,17 @@ async function runClientAggregate(
         }
         const raw = rawRows(result);
         const rows = applyReverseEntityAliases(cleanRows(raw), table);
-        aggregator.add(rows);
+        // Every row is unique by its full key tuple. Drop a row seen twice in a
+        // page or repeated across the page boundary instead of counting it again.
+        const seen = new Set<string>(lastTuple ? [lastTuple] : []);
+        const fresh = rows.filter((row) => {
+            const tuple = keyTuple(keyValues(row, keyPlan));
+            if (seen.has(tuple)) return false;
+            seen.add(tuple);
+            return true;
+        });
+        duplicates += rows.length - fresh.length;
+        aggregator.add(fresh);
         options.onProgress?.(aggregator.scannedRows);
         options.onScanProgress?.(aggregator.scannedRows);
         if (options.maxScanRows !== undefined && aggregator.scannedRows > options.maxScanRows) {
@@ -386,12 +396,22 @@ async function runClientAggregate(
             );
         }
         if (raw.length === 0) return done(page);
+        const pageLast = keyValues(rows[rows.length - 1], keyPlan);
+        const pageLastTuple = keyTuple(pageLast);
+        if (pageLastTuple === lastTuple) {
+            // The page ended where the previous one did: paging isn't advancing.
+            throw new Error(
+                `The client-side aggregate stopped on page ${page}: Dataverse returned the same last row again, so paging ` +
+                    `doesn't advance (${aggregator.scannedRows.toLocaleString('en-US')} rows read).`,
+            );
+        }
+        lastTuple = pageLastTuple;
         pagingCookie = keyset ? null : pagingCookieOf(result);
         if (pagingCookie) continue;
         // No cookie: a short page is the last one; a full page continues by keyset.
         if (raw.length < SCAN_PAGE_SIZE) return done(page);
         keyset = true;
-        lastKeys = keyValues(rows[rows.length - 1], keyPlan);
+        lastKeys = pageLast;
     }
 }
 
@@ -419,28 +439,16 @@ function swapActivityKey(plan: ClientAggregatePlan, err: unknown): ClientAggrega
     };
 }
 
-/**
- * `SELECT COUNT(*) FROM <table>` over the limit: Dataverse's record-count
- * snapshot, when the host can run RetrieveTotalRecordCount. Null to scan instead.
- */
-async function snapshotCount(stmt: SelectStatement, options: SelectExecutionOptions): Promise<number | null> {
-    if (!options.totalRecordCount || !isPlainTableCount(stmt)) return null;
-    try {
-        return await options.totalRecordCount(stmt.from.table);
-    } catch {
-        return null;
-    }
-}
-
 function describeScan(run: ClientAggregateRun): string {
     const how = run.keyset
         ? 'paged by primary keys (keyset; the joins can repeat a record across rows)'
         : 'paged with the paging cookie';
     const stop = run.cancelled ? ' Cancelled: the values are partial.' : '';
+    const dupes = run.duplicates > 0 ? ` ${run.duplicates.toLocaleString('en-US')} repeated row(s) dropped.` : '';
     return (
         `     Computed client-side from a scan without aggregation, ${how}:\n` +
         `     ${run.pageCount} page(s), ${run.aggregator.scannedRows.toLocaleString('en-US')} row(s) read, ` +
-        `${run.aggregator.groupCount.toLocaleString('en-US')} group(s).${stop}`
+        `${run.aggregator.groupCount.toLocaleString('en-US')} group(s).${dupes}${stop}`
     );
 }
 
@@ -942,24 +950,9 @@ export async function executeSelect(
         pagingCookie = queryResult.pagingCookie;
     } catch (queryErr) {
         // Dataverse rejects an aggregate over more than 50,000 source records
-        // (0x8004e023). A plain table count comes from the record-count
-        // snapshot; anything else is aggregated client-side from a scan.
+        // (0x8004e023): aggregate client-side from a scan. Counts stay exact,
+        // so there's no RetrieveTotalRecordCount shortcut (it's a snapshot).
         if (!isAggregateLimitError(queryErr)) throw queryErr;
-        const snapshot = await snapshotCount(effectiveStmt, options);
-        if (snapshot !== null) {
-            const key = getRequestedColumns(effectiveStmt)![0];
-            return {
-                rows: [{ [key]: snapshot }],
-                columns: [key],
-                fetchXml:
-                    `<!-- The count exceeded Dataverse's 50,000-record limit (${AGGREGATE_LIMIT_CODE}).\n` +
-                    `     Taken from RetrieveTotalRecordCount instead: Dataverse's record-count snapshot,\n` +
-                    `     which can lag recent changes. -->\n${fetchXml}`,
-                pagingCookie: null,
-                jsonColumns,
-                summary: `${snapshot.toLocaleString('en-US')} rows (RetrieveTotalRecordCount snapshot)`,
-            };
-        }
         const plan = planClientAggregate(effectiveStmt);
         if (plan) {
             const run = await runClientAggregate(query, plan, options);

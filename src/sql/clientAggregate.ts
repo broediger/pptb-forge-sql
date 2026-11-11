@@ -196,16 +196,32 @@ function equal(col: ColumnRef, value: unknown): WhereExpr {
 }
 
 /**
- * The condition for the rows after `last` in key order:
- * `k1 > v1 OR (k1 = v1 AND (k2 > v2 OR (k2 = v2 AND …)))`.
+ * The condition for the rows after `last` in key order, lexicographic across
+ * all keys:
+ *
+ *   (k1 > v1) OR (k1 = v1 AND k2 > v2) OR (k1 = v1 AND k2 = v2 AND k3 > v3) …
+ *
+ * Each key keeps its table reference, so link-entity keys get `entityname`.
+ * The comparisons run on the server: GUIDs follow SQL Server's
+ * uniqueidentifier ordering, which a client-side string comparison wouldn't
+ * match. A NULL key (an outer join without a match) compares explicitly: the
+ * rows after it have a non-null value there, the rows equal to it are null.
  */
 export function keysetCondition(keys: ColumnRef[], last: unknown[]): WhereExpr {
-    const build = (i: number): WhereExpr => {
-        const gt = after(keys[i], last[i]);
-        if (i === keys.length - 1) return gt;
-        return { kind: 'or', left: gt, right: { kind: 'and', left: equal(keys[i], last[i]), right: build(i + 1) } };
-    };
-    return build(0);
+    const terms: WhereExpr[] = keys.map((key, i) => {
+        let term = after(key, last[i]);
+        for (let j = i - 1; j >= 0; j--) term = { kind: 'and', left: equal(keys[j], last[j]), right: term };
+        return term;
+    });
+    return terms.reduce((left, right) => ({ kind: 'or', left, right }));
+}
+
+/**
+ * A row's key values as one string, for spotting the same row twice. Only
+ * equality is checked here; ordering is left to Dataverse.
+ */
+export function keyTuple(values: unknown[]): string {
+    return JSON.stringify(values.map((v) => (v == null ? null : String(v).toLowerCase())));
 }
 
 /** `stmt` restricted to the rows after `last` (in key order). */
@@ -386,57 +402,4 @@ export class ClientAggregator {
         if (plan.top !== undefined) rows = rows.slice(0, plan.top);
         return rows;
     }
-}
-
-// ── RetrieveTotalRecordCount ──
-
-/**
- * `SELECT COUNT(*) FROM <table>` with nothing else: Dataverse can answer it
- * from its record-count snapshot (RetrieveTotalRecordCount) without a scan.
- */
-export function isPlainTableCount(stmt: SelectStatement): boolean {
-    if (stmt.columns.length !== 1) return false;
-    const col = stmt.columns[0];
-    return (
-        isAggregateExpr(col) &&
-        col.function === 'COUNT' &&
-        col.column.column === '*' &&
-        !col.distinct &&
-        stmt.joins.length === 0 &&
-        !stmt.where &&
-        !stmt.groupBy &&
-        !stmt.having
-    );
-}
-
-/** The count for `table` in a RetrieveTotalRecordCount response, or null if it isn't there. */
-export function parseTotalRecordCount(response: unknown, table: string): number | null {
-    const collection = (response as { EntityRecordCountCollection?: { Keys?: unknown; Values?: unknown } } | null)
-        ?.EntityRecordCountCollection;
-    const keys = collection?.Keys;
-    const values = collection?.Values;
-    if (!Array.isArray(keys) || !Array.isArray(values)) return null;
-    const index = keys.findIndex((k) => typeof k === 'string' && k.toLowerCase() === table.toLowerCase());
-    const value = index === -1 ? undefined : values[index];
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-/** The host's `dataverseAPI.execute`, as far as RetrieveTotalRecordCount needs it. */
-export type ExecuteFn = (request: {
-    operationName: string;
-    operationType: 'function';
-    parameters: Record<string, unknown>;
-}) => Promise<unknown>;
-
-/** A `totalRecordCount` option for `executeSelect` that calls RetrieveTotalRecordCount through `execute`. */
-export function totalRecordCountVia(execute: ExecuteFn): (table: string) => Promise<number | null> {
-    return async (table) =>
-        parseTotalRecordCount(
-            await execute({
-                operationName: 'RetrieveTotalRecordCount',
-                operationType: 'function',
-                parameters: { EntityNames: [table] },
-            }),
-            table,
-        );
 }

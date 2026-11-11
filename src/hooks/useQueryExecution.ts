@@ -3,7 +3,6 @@ import { tokenize, parseStatement, SqlParseError } from '../sql';
 import type { JsonValueColumn } from '../sql/jsonValue';
 import { extractColumns } from '../sql/columnResolution';
 import { executeSelect, fetchNextPage, type FetchXmlQueryFn } from '../sql/selectExecution';
-import { totalRecordCountVia } from '../sql/clientAggregate';
 
 interface QueryExecutionState {
     results: Record<string, unknown>[] | null;
@@ -40,12 +39,6 @@ const queryDataverse: FetchXmlQueryFn = async (fetchXml) => {
     return window.dataverseAPI.fetchXmlQuery(fetchXml);
 };
 
-const totalRecordCount = totalRecordCountVia((request) => {
-    if (typeof window === 'undefined' || !window.dataverseAPI) {
-        return Promise.reject(new Error('Dataverse API not available.'));
-    }
-    return window.dataverseAPI.execute(request);
-});
 
 export function useQueryExecution(): QueryExecutionReturn {
     const [state, setState] = useState<QueryExecutionState>({
@@ -105,7 +98,6 @@ export function useQueryExecution(): QueryExecutionReturn {
                 },
                 onScanProgress: (scanProgress) => setState((prev) => ({ ...prev, scanProgress })),
                 isCancelled: () => cancelScanRef.current || generationRef.current !== generation,
-                totalRecordCount,
             });
             // A newer run started meanwhile (and cancelled this scan): its state wins.
             if (generationRef.current !== generation) {

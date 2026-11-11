@@ -1,6 +1,5 @@
 import { tokenize, parseStatement, SqlParseError } from './sql';
 import { executeSelect, type FetchXmlQueryFn } from './sql/selectExecution';
-import { totalRecordCountVia } from './sql/clientAggregate';
 
 /**
  * Headless entry for the PPTB MCP server (`agents.headlessEntry` in
@@ -54,7 +53,6 @@ export function resolveMaxRows(value: unknown): number {
 export async function runHeadlessQuery(
     input: Record<string, unknown>,
     query: FetchXmlQueryFn,
-    totalRecordCount?: (table: string) => Promise<number | null>,
 ): Promise<HeadlessQueryResult> {
     const sql = typeof input.sql === 'string' ? input.sql.trim() : '';
     if (!sql) {
@@ -80,7 +78,6 @@ export async function runHeadlessQuery(
             // A client-side filtered read can stop once the agent's rows are found.
             rowLimit: maxRows,
             maxScanRows: HEADLESS_MAX_SCAN_ROWS,
-            totalRecordCount,
         });
         // Keep only the result columns: rows also carry the raw OData keys the
         // grid hides, and Dataverse omits nulls, so fill those in explicitly.
@@ -122,11 +119,7 @@ export async function invokeHeadless(
     input: Record<string, unknown>,
     context: HeadlessContext = {},
 ): Promise<HeadlessQueryResult> {
-    const result = await runHeadlessQuery(
-        input,
-        queryDataverse,
-        totalRecordCountVia((request) => window.dataverseAPI.execute(request)),
-    );
+    const result = await runHeadlessQuery(input, queryDataverse);
     if (result.status === 'success') {
         context.logger?.info(`${result.summary} in ${result.executionTimeMs}ms`);
     } else {
